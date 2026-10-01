@@ -1,4 +1,4 @@
-package app.coldforge;
+package work.coldforge.app;
 
 import com.getcapacitor.BridgeActivity;
 

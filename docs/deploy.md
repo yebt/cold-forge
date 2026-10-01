@@ -100,7 +100,7 @@ allow-list policy for the owner's email).
    - API restrictions → **Restrict key**: Identity Toolkit API, Token Service API, Cloud Firestore API
      (add Firebase Installations API only if a Firebase product later needs it; there is no Analytics).
 4. **Android app (for native Google sign-in in the APK)**: Project settings → Add app → Android,
-   package `app.coldforge`. Add the **SHA-1 and SHA-256** of the release keystore (section 3) and of your
+   package `work.coldforge.app`. Add the **SHA-1 and SHA-256** of the release keystore (section 3) and of your
    local debug keystore. Download `google-services.json` and store it as the
    `GOOGLE_SERVICES_JSON_BASE64` secret (`base64 -w0 google-services.json`). Without it the APK still
    works in guest mode, but "Sign in with Google" fails.
