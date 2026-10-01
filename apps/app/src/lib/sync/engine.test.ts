@@ -465,3 +465,82 @@ describe("sign-in links (login-CSRF guard)", () => {
     expect(s.engine.getSnapshot().pendingLink).toEqual({ email: "yahir@example.com" });
   });
 });
+
+describe("sync engine: stricter server", () => {
+  test("400 invalid_request pauses sync instead of retry-looping", async () => {
+    const s = setup();
+    await s.signIn();
+    s.server.fail({ kind: "invalid_request" });
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot().status).toBe("rejected");
+    expect(s.timers.pending.size).toBe(0);
+  });
+
+  test("a record that can't be sent stays pending and doesn't block or loop", async () => {
+    const s = setup();
+    await s.signIn();
+    const d = s.data!;
+    // One edit stamped far in the future (clock way ahead) plus a normal one.
+    s.data = setCheckIn(setCheckIn(d, d.habits[0]!.id, "2026-10-04", true, "2030-01-01T00:00:00.000Z"), d.habits[1]!.id, "2026-10-04", true, T2);
+    const before = s.server.requests.length;
+    await s.engine.requestSync("manual");
+    const pushed = s.server.requests.slice(before).flatMap((r) => r.changes.checkIns);
+    expect(pushed.map((c) => c.habitId)).toEqual([d.habits[1]!.id]);
+    expect(s.engine.getSnapshot().status).toBe("idle");
+    expect(s.timers.pending.size).toBe(0); // no follow-up loop for the held-back record
+  });
+
+  test("an invalid emoji is repaired on the way out", async () => {
+    const s = setup();
+    s.data = { ...s.data!, habits: s.data!.habits.map((h, i) => (i === 0 ? { ...h, emoji: "x" } : h)) };
+    await s.signIn();
+    expect(s.server.snapshot().habits.find((h) => h.id === s.data!.habits[0]!.id)?.emoji).toBe("🔥");
+  });
+
+  test("stays under the API's 20 sync calls per minute on its own", async () => {
+    const s = setup();
+    await s.signIn();
+    for (let i = 0; i < 20; i++) {
+      s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, "2026-10-04", i % 2 === 0, `2026-10-04T10:00:${String(i).padStart(2, "0")}.000Z`);
+      await s.engine.requestSync("manual");
+    }
+    expect(s.server.requests.length).toBeLessThanOrEqual(15);
+    expect(s.engine.getSnapshot().status).toBe("rateLimited");
+  });
+});
+
+test("the engine only needs a SyncTransport for records (backend-swappable)", async () => {
+  const server = fakeServer();
+  const calls: (string | null)[] = [];
+  let data: AppData | null = makeData();
+  const engine = createSyncEngine({
+    api: {
+      baseUrl: "https://x.dev",
+      requestMagicLink: async () => ({ ok: true, value: { requestId: "x" } }),
+      verify: async () => ({ ok: true, value: SESSION }),
+      logout: async () => ({ ok: true, value: undefined }),
+      deleteAccount: async () => ({ ok: true, value: undefined }),
+      sync: async () => {
+        throw new Error("HTTP sync must not be used when a transport is given");
+      },
+    },
+    transport: {
+      exchange: (credential, req) => {
+        calls.push(req.cursor);
+        return server.sync(credential, { protocol: 1, ...req });
+      },
+    },
+    storage: memoryStorage(),
+    getData: () => data,
+    setData: (d) => void (data = d),
+    today: () => TODAY,
+    now: () => NOW,
+    timers: fakeTimers().timers,
+  });
+  await engine.init();
+  await engine.signIn(SESSION);
+  await engine.requestSync("manual");
+  expect(engine.getSnapshot().status).toBe("idle");
+  expect(calls[0]).toBeNull();
+  expect(server.snapshot().arcs).toHaveLength(1);
+});

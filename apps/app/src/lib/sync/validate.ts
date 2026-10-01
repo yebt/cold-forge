@@ -1,5 +1,6 @@
 import {
   LIMITS,
+  canonicalTimestamp,
   SYNC_PROTOCOL_VERSION,
   emptyChanges,
   normalizeEmail,
@@ -21,15 +22,15 @@ export const MAX_RECORDS = 200_000;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 /** Opaque cursor: printable ASCII, bounded. */
 const CURSOR = /^[\x21-\x7e]{1,512}$/;
 /** Bearer tokens must be header-safe (no CR/LF/space), bounded. */
 const TOKEN = /^[A-Za-z0-9._~+/=-]{16,1024}$/;
 const USER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
+/** A real ISO UTC timestamp (0–3 fractional digits, round-trips). */
 export function isTimestamp(v: unknown): v is string {
-  return typeof v === "string" && TIMESTAMP.test(v) && !Number.isNaN(Date.parse(v));
+  return canonicalTimestamp(v) !== null;
 }
 
 function chunks<T>(list: readonly T[], size: number): T[][] {

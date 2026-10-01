@@ -1,6 +1,7 @@
 import { HABIT_TEMPLATES, isISODate, type HabitTemplateId } from "@cold-forge/core";
 import { isLocale } from "@cold-forge/i18n";
-import { isId } from "@cold-forge/sync";
+import { canonicalTimestamp, isEmoji, isId } from "@cold-forge/sync";
+import { FALLBACK_EMOJI, repairHabitName, repairText, type TextField } from "./fields.ts";
 import {
   DATA_LIMITS,
   DEFAULT_REMINDER_TIME,
@@ -13,24 +14,28 @@ import {
   type StoredArc,
   type StoredHabit,
 } from "./model.ts";
-import { UNSAFE_TEXT, cleanText, codePointLength } from "./text.ts";
+import { codePointLength } from "./text.ts";
 
 /**
  * Strict validation of AppData coming from outside the running app (device storage or an
  * imported file). Every field is copied explicitly into a fresh object, so unknown fields (and
- * keys like `__proto__`) never survive.
+ * keys like `__proto__`) never survive. Structural problems (ids, dates, timestamps, shapes,
+ * counts) always reject.
  *
- * - `import`: anything off is rejected — the user picked a file we don't trust.
- * - `storage`: our own data. Text that is merely too long or has invisible control characters is
- *   repaired instead of discarding the user's whole history; structural problems still reject.
+ * Text and emoji are *repaired* into what the sync API accepts — invisible/bidi/control
+ * characters stripped, invalid emoji -> 🔥, blank custom names -> "Habit" — and every repaired
+ * record gets `updatedAt = now` so the fix syncs. Otherwise one bad value would make every sync
+ * fail with 400 invalid_request forever.
+ *
+ * - `import`: over-long text is still rejected (a genuine export can't contain it).
+ * - `storage`: our own data; over-long text is truncated rather than losing the user's history.
  */
 export type ParseMode = "storage" | "import";
 
 export type ParseResult =
-  | { ok: true; data: AppData; droppedCheckIns: number }
+  | { ok: true; data: AppData; droppedCheckIns: number; repaired: number }
   | { ok: false; error: string };
 
-const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const TEMPLATE_IDS = new Set<string>(HABIT_TEMPLATES.map((t) => t.id));
 
@@ -41,20 +46,29 @@ const fail = (path: string, why: string): never => {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-function text(v: unknown, path: string, max: number, mode: ParseMode, multiline = false): string {
+/** Per-record repair bookkeeping. */
+interface Ctx {
+  mode: ParseMode;
+  now: string;
+  repaired: boolean;
+}
+
+const MAX: Record<TextField, number> = { name: TEXT_LIMITS.name, why: TEXT_LIMITS.why, displayName: TEXT_LIMITS.displayName };
+
+function text(v: unknown, path: string, field: TextField, ctx: Ctx): string {
   if (typeof v !== "string") return fail(path, "must be a string");
-  if (mode === "storage") return cleanText(v, max, multiline);
-  if (codePointLength(v) > max) return fail(path, `longer than ${max} characters`);
-  if (UNSAFE_TEXT.test(v) || (!multiline && /[\n\t]/.test(v))) return fail(path, "contains control characters");
-  return v;
+  if (ctx.mode === "import" && codePointLength(v) > MAX[field]) return fail(path, `longer than ${MAX[field]} characters`);
+  if (v.length > 10_000) return fail(path, "far too long");
+  const fixed = repairText(field, v);
+  if (fixed !== v) ctx.repaired = true;
+  return fixed;
 }
 
 function timestamp(v: unknown, path: string): string {
-  if (typeof v !== "string" || !TIMESTAMP.test(v) || Number.isNaN(Date.parse(v))) {
-    return fail(path, "must be an ISO UTC timestamp");
-  }
-  return v;
+  return canonicalTimestamp(v) ?? fail(path, "must be an ISO UTC timestamp");
 }
+
+const fresh = (mode: ParseMode, now: string): Ctx => ({ mode, now, repaired: false });
 
 function id(v: unknown, path: string): string {
   return isId(v) ? v : fail(path, "invalid id");
@@ -68,7 +82,7 @@ function bool(v: unknown, fallback: boolean): boolean {
   return typeof v === "boolean" ? v : fallback;
 }
 
-function parseArc(v: unknown, mode: ParseMode): StoredArc {
+function parseArc(v: unknown, ctx: Ctx): StoredArc {
   if (!isObj(v)) return fail("arc", "must be an object");
   const kind = v.kind === "winter" || v.kind === "custom" ? v.kind : fail("arc.kind", "invalid");
   const startDate = date(v.startDate, "arc.startDate");
@@ -79,13 +93,13 @@ function parseArc(v: unknown, mode: ParseMode): StoredArc {
     kind,
     startDate,
     endDate,
-    why: text(v.why ?? "", "arc.why", TEXT_LIMITS.why, mode, true),
+    why: text(v.why ?? "", "arc.why", "why", ctx),
     createdAt: timestamp(v.createdAt, "arc.createdAt"),
-    updatedAt: timestamp(v.updatedAt, "arc.updatedAt"),
+    updatedAt: ctx.repaired ? ctx.now : timestamp(v.updatedAt, "arc.updatedAt"),
   };
 }
 
-function parseHabit(v: unknown, path: string, mode: ParseMode): StoredHabit {
+function parseHabit(v: unknown, path: string, ctx: Ctx): StoredHabit {
   if (!isObj(v)) return fail(path, "must be an object");
   let templateId: HabitTemplateId | undefined;
   if (v.templateId !== undefined && v.templateId !== null) {
@@ -95,10 +109,15 @@ function parseHabit(v: unknown, path: string, mode: ParseMode): StoredHabit {
   if (typeof v.order !== "number" || !Number.isInteger(v.order) || v.order < 0 || v.order > 10_000) {
     fail(`${path}.order`, "must be a small non-negative integer");
   }
-  const name = text(v.name, `${path}.name`, TEXT_LIMITS.name, mode);
-  if (!name.trim() && !templateId) fail(`${path}.name`, "must not be empty");
-  const emoji = text(v.emoji, `${path}.emoji`, TEXT_LIMITS.emoji, mode) || (mode === "storage" ? "🔥" : "");
-  if (!emoji.trim()) fail(`${path}.emoji`, "must not be empty");
+  const cleaned = text(v.name, `${path}.name`, "name", ctx);
+  const name = repairHabitName(cleaned, !!templateId);
+  if (name !== cleaned) ctx.repaired = true;
+  if (typeof v.emoji !== "string" || v.emoji.length > 1000) fail(`${path}.emoji`, "must be a string");
+  let emoji = v.emoji as string;
+  if (!isEmoji(emoji)) {
+    emoji = FALLBACK_EMOJI;
+    ctx.repaired = true;
+  }
   const deletedAt = v.deletedAt === undefined || v.deletedAt === null ? undefined : timestamp(v.deletedAt, `${path}.deletedAt`);
   return {
     id: id(v.id, `${path}.id`),
@@ -107,7 +126,7 @@ function parseHabit(v: unknown, path: string, mode: ParseMode): StoredHabit {
     emoji,
     order: v.order as number,
     createdAt: timestamp(v.createdAt, `${path}.createdAt`),
-    updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`),
+    updatedAt: ctx.repaired ? ctx.now : timestamp(v.updatedAt, `${path}.updatedAt`),
     ...(deletedAt ? { deletedAt } : {}),
   };
 }
@@ -123,7 +142,7 @@ function parseCheckIn(v: unknown, path: string): CheckInRecord {
   };
 }
 
-function parseSettings(v: unknown, mode: ParseMode): Settings {
+function parseSettings(v: unknown, ctx: Ctx): Settings {
   if (!isObj(v)) return fail("settings", "must be an object");
   if (!isLocale(v.locale)) fail("settings.locale", "unsupported");
   const settings: Settings = {
@@ -132,10 +151,14 @@ function parseSettings(v: unknown, mode: ParseMode): Settings {
     haptics: bool(v.haptics, true),
     reminderEnabled: bool(v.reminderEnabled, false),
     reminderTime: typeof v.reminderTime === "string" && TIME.test(v.reminderTime) ? v.reminderTime : DEFAULT_REMINDER_TIME,
-    displayName: text(v.displayName ?? "", "settings.displayName", TEXT_LIMITS.displayName, mode),
+    displayName: text(v.displayName ?? "", "settings.displayName", "displayName", ctx),
     updatedAt: timestamp(v.updatedAt, "settings.updatedAt"),
   };
   if (v.profileUpdatedAt !== undefined) settings.profileUpdatedAt = timestamp(v.profileUpdatedAt, "settings.profileUpdatedAt");
+  if (ctx.repaired) {
+    settings.updatedAt = ctx.now;
+    settings.profileUpdatedAt = ctx.now;
+  }
   return settings;
 }
 
@@ -147,16 +170,25 @@ function parseMilestones(v: unknown): number[] {
   return [...new Set(days)].sort((a, b) => a - b);
 }
 
-export function validateAppData(raw: unknown, mode: ParseMode): ParseResult {
+export function validateAppData(raw: unknown, mode: ParseMode, now = new Date().toISOString()): ParseResult {
   try {
     if (!isObj(raw)) return fail("data", "must be an object");
     if (raw.version !== SCHEMA_VERSION) fail("version", `must be ${SCHEMA_VERSION}`);
-    const arc = parseArc(raw.arc, mode);
+    let repaired = 0;
+    const count = <T>(ctx: Ctx, value: T): T => {
+      if (ctx.repaired) repaired++;
+      return value;
+    };
+    const arcCtx = fresh(mode, now);
+    const arc = count(arcCtx, parseArc(raw.arc, arcCtx));
 
     if (!Array.isArray(raw.habits)) fail("habits", "must be an array");
     const rawHabits = raw.habits as unknown[];
     if (rawHabits.length > DATA_LIMITS.habits) fail("habits", `more than ${DATA_LIMITS.habits}`);
-    const habits = rawHabits.map((h, i) => parseHabit(h, `habits[${i}]`, mode));
+    const habits = rawHabits.map((h, i) => {
+      const ctx = fresh(mode, now);
+      return count(ctx, parseHabit(h, `habits[${i}]`, ctx));
+    });
     const habitIds = new Set(habits.map((h) => h.id));
     if (habitIds.size !== habits.length) fail("habits", "duplicate ids");
 
@@ -182,10 +214,13 @@ export function validateAppData(raw: unknown, mode: ParseMode): ParseResult {
       arc,
       habits,
       checkIns: { ...checkIns },
-      settings: parseSettings(raw.settings, mode),
+      settings: (() => {
+        const ctx = fresh(mode, now);
+        return count(ctx, parseSettings(raw.settings, ctx));
+      })(),
       celebratedMilestones: parseMilestones(raw.celebratedMilestones),
     };
-    return { ok: true, data, droppedCheckIns };
+    return { ok: true, data, droppedCheckIns, repaired };
   } catch (e) {
     if (e instanceof Invalid) return { ok: false, error: e.message };
     throw e;
@@ -193,7 +228,7 @@ export function validateAppData(raw: unknown, mode: ParseMode): ParseResult {
 }
 
 /** Returns the data if it has the expected shape, otherwise `null` (treated as a fresh install). */
-export function parseAppData(raw: unknown, mode: ParseMode = "storage"): AppData | null {
-  const r = validateAppData(raw, mode);
+export function parseAppData(raw: unknown, mode: ParseMode = "storage", now?: string): AppData | null {
+  const r = validateAppData(raw, mode, now);
   return r.ok ? r.data : null;
 }

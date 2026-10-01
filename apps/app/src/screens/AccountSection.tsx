@@ -1,4 +1,4 @@
-import { normalizeEmail } from "@cold-forge/sync";
+import { normalizeEmail, type SessionResponse } from "@cold-forge/sync";
 import { useEffect, useState, type FormEvent } from "react";
 import { formatAgo } from "../i18n/index.ts";
 import type { ApiError } from "../lib/sync/api.ts";
@@ -8,12 +8,10 @@ import { useSync } from "../sync/useSync.ts";
 import { useApp } from "../state.tsx";
 import { Modal } from "../ui/Modal.tsx";
 
-const RESEND_COOLDOWN_S = 60;
+/** At least 30 s per the API; 60 s keeps inboxes calm. */
+export const RESEND_COOLDOWN_S = 60;
 
-type Step =
-  | { kind: "intro" }
-  | { kind: "email" }
-  | { kind: "code"; email: string; requestId: string; sentAt: number };
+type Step = { kind: "intro" } | { kind: "email" } | { kind: "code"; email: string; requestId: string };
 
 /** Ticks every `ms` so relative times and countdowns stay fresh. */
 function useNow(ms: number): number {
@@ -57,48 +55,151 @@ function useErrorText() {
   };
 }
 
+/** Asks the API to email a code. Returns the request id, or an error message. */
+async function requestCode(
+  email: string,
+  locale: Parameters<typeof syncEngine.api.requestMagicLink>[1],
+): Promise<{ ok: true; requestId: string } | { ok: false; error: ApiError }> {
+  // Lets the emailed link for this same address sign in without the extra confirmation.
+  syncEngine.noteCodeRequested(email);
+  const r = await syncEngine.api.requestMagicLink(email, locale);
+  return r.ok ? { ok: true, requestId: r.value.requestId } : r;
+}
+
+/** The 6-digit code step: numeric one-time-code input, auto-submit, resend with cooldown. */
+function CodeEntry({
+  email,
+  requestId: initialRequestId,
+  title,
+  body,
+  submitLabel,
+  onSession,
+  secondary,
+}: {
+  email: string;
+  requestId: string;
+  title: string;
+  body: string;
+  submitLabel: string;
+  onSession: (s: SessionResponse) => Promise<void>;
+  secondary?: { label: string; onClick: () => void };
+}) {
+  const { t } = useApp();
+  const a = t.ui.account;
+  const errorText = useErrorText();
+  const [requestId, setRequestId] = useState(initialRequestId);
+  const [sentAt, setSentAt] = useState(Date.now);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const now = useNow(1000);
+  // `now` ticks once a second and may lag `sentAt` by a moment: clamp to [0, cooldown].
+  const wait = Math.min(RESEND_COOLDOWN_S, Math.max(0, RESEND_COOLDOWN_S - Math.floor((now - sentAt) / 1000)));
+
+  const verify = async (value: string) => {
+    if (!/^\d{6}$/.test(value) || busy) return;
+    setBusy(true);
+    setError(null);
+    const r = await syncEngine.api.verify({ requestId, code: value });
+    if (!r.ok) {
+      setBusy(false);
+      setError(errorText(r.error));
+      return;
+    }
+    await onSession(r.value);
+    setBusy(false);
+  };
+
+  const resend = async () => {
+    setBusy(true);
+    setError(null);
+    const r = await requestCode(email, t.locale);
+    setBusy(false);
+    if (!r.ok) {
+      setError(errorText(r.error));
+      return;
+    }
+    setRequestId(r.requestId);
+    setSentAt(Date.now());
+    setCode("");
+  };
+
+  return (
+    <form
+      className="account-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void verify(code);
+      }}
+    >
+      <p className="account-step-title">📬 {title}</p>
+      <p className="muted small account-sent">{body}</p>
+      <label className="field">
+        <span>{a.codeLabel}</span>
+        <input
+          className="code-input"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="[0-9]*"
+          maxLength={6}
+          placeholder="••••••"
+          value={code}
+          onChange={(e) => {
+            const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+            setCode(digits);
+            if (digits.length === 6) void verify(digits);
+          }}
+          autoFocus
+        />
+      </label>
+      {error && (
+        <p className="note warn" role="alert">
+          {error}
+        </p>
+      )}
+      <button type="submit" className="btn primary block" disabled={busy || code.length !== 6}>
+        {submitLabel}
+      </button>
+      <div className="account-actions">
+        {secondary ? (
+          <button type="button" className="btn ghost small" onClick={secondary.onClick}>
+            {secondary.label}
+          </button>
+        ) : (
+          <span />
+        )}
+        <button type="button" className="btn ghost small" disabled={busy || wait > 0} onClick={() => void resend()}>
+          {wait > 0 ? a.resendIn(wait) : a.resend}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function SignInFlow() {
   const { t } = useApp();
   const a = t.ui.account;
   const errorText = useErrorText();
   const [step, setStep] = useState<Step>({ kind: "intro" });
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const now = useNow(1000);
 
-  const send = async (address: string) => {
-    const normalized = normalizeEmail(address);
+  const send = async () => {
+    const normalized = normalizeEmail(email);
     if (!normalized.ok) {
       setError(a.errInvalidEmail);
       return;
     }
     setBusy(true);
     setError(null);
-    // Lets the emailed link for this same address sign in without the extra confirmation.
-    syncEngine.noteCodeRequested(normalized.value);
-    const r = await syncEngine.api.requestMagicLink(normalized.value, t.locale);
+    const r = await requestCode(normalized.value, t.locale);
     setBusy(false);
     if (!r.ok) {
       setError(errorText(r.error));
       return;
     }
-    setCode("");
-    setStep({ kind: "code", email: normalized.value, requestId: r.value.requestId, sentAt: Date.now() });
-  };
-
-  const verify = async (value: string) => {
-    if (step.kind !== "code" || !/^\d{6}$/.test(value) || busy) return;
-    setBusy(true);
-    setError(null);
-    const r = await syncEngine.api.verify({ requestId: step.requestId, code: value });
-    setBusy(false);
-    if (!r.ok) {
-      setError(errorText(r.error));
-      return;
-    }
-    await syncEngine.signIn(r.value);
+    setStep({ kind: "code", email: normalized.value, requestId: r.requestId });
   };
 
   if (step.kind === "intro") {
@@ -116,7 +217,7 @@ function SignInFlow() {
   if (step.kind === "email") {
     const onSubmit = (e: FormEvent) => {
       e.preventDefault();
-      void send(email);
+      void send();
     };
     return (
       <form className="account-form" onSubmit={onSubmit} noValidate>
@@ -153,60 +254,17 @@ function SignInFlow() {
     );
   }
 
-  // `now` ticks once a second and may lag `sentAt` by a moment: clamp to [0, cooldown].
-  const wait = Math.min(RESEND_COOLDOWN_S, Math.max(0, RESEND_COOLDOWN_S - Math.floor((now - step.sentAt) / 1000)));
   return (
-    <form
-      className="account-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void verify(code);
-      }}
-    >
-      <p className="account-step-title">📬 {a.checkInbox}</p>
-      <p className="muted small account-sent">{a.sentTo(step.email)}</p>
-      <label className="field">
-        <span>{a.codeLabel}</span>
-        <input
-          className="code-input"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          pattern="[0-9]*"
-          maxLength={6}
-          placeholder="••••••"
-          value={code}
-          onChange={(e) => {
-            const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
-            setCode(digits);
-            if (digits.length === 6) void verify(digits);
-          }}
-          autoFocus
-        />
-      </label>
-      {error && (
-        <p className="note warn" role="alert">
-          {error}
-        </p>
-      )}
-      <button type="submit" className="btn primary block" disabled={busy || code.length !== 6}>
-        {a.verify}
-      </button>
-      <div className="account-actions">
-        <button
-          type="button"
-          className="btn ghost small"
-          onClick={() => {
-            setError(null);
-            setStep({ kind: "email" });
-          }}
-        >
-          {a.changeEmail}
-        </button>
-        <button type="button" className="btn ghost small" disabled={busy || wait > 0} onClick={() => void send(step.email)}>
-          {wait > 0 ? a.resendIn(wait) : a.resend}
-        </button>
-      </div>
-    </form>
+    <CodeEntry
+      key={step.requestId}
+      email={step.email}
+      requestId={step.requestId}
+      title={a.checkInbox}
+      body={a.sentTo(step.email)}
+      submitLabel={a.verify}
+      onSession={(s) => syncEngine.signIn(s)}
+      secondary={{ label: a.changeEmail, onClick: () => setStep({ kind: "email" }) }}
+    />
   );
 }
 
@@ -222,6 +280,8 @@ function statusText(sync: SyncSnapshot, a: ReturnType<typeof useApp>["t"]["ui"][
       return a.rateLimited;
     case "quota":
       return a.quota;
+    case "rejected":
+      return a.rejected;
     case "conflict":
       return a.conflictStatus;
     default:
@@ -229,28 +289,30 @@ function statusText(sync: SyncSnapshot, a: ReturnType<typeof useApp>["t"]["ui"][
   }
 }
 
+type DeleteStep = null | { kind: "first" } | { kind: "second" };
+
 function SignedIn({ sync }: { sync: SyncSnapshot }) {
   const { t, reset, showConflict } = useApp();
   const a = t.ui.account;
   const now = useNow(30_000);
-  const [confirm, setConfirm] = useState<null | "first" | "second">(null);
+  const [step, setStep] = useState<DeleteStep>(null);
   const [eraseLocal, setEraseLocal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ago = sync.lastSyncedAt ? formatAgo(sync.lastSyncedAt, now, t.locale, a.justNow) : null;
   const tone = sync.status === "idle" || sync.status === "syncing" ? "ok" : sync.status === "offline" ? "muted" : "warn";
+  const email = sync.account?.email ?? "";
 
   const onDelete = async () => {
     setBusy(true);
     setError(null);
     const r = await syncEngine.deleteAccount();
     setBusy(false);
+    setStep(null);
     if (!r.ok) {
       setError(a.deleteFailed);
-      setConfirm(null);
       return;
     }
-    setConfirm(null);
     if (eraseLocal) await reset();
   };
 
@@ -258,7 +320,7 @@ function SignedIn({ sync }: { sync: SyncSnapshot }) {
     <>
       <div className="account-who">
         <span className="muted small">{a.signedInAs}</span>
-        <strong className="account-email">{sync.account?.email}</strong>
+        <strong className="account-email">{email}</strong>
       </div>
       <p className={`sync-status ${tone}`} role="status" aria-live="polite">
         <span className="dot" aria-hidden="true" />
@@ -286,32 +348,32 @@ function SignedIn({ sync }: { sync: SyncSnapshot }) {
           {error}
         </p>
       )}
-      <button className="btn danger block" onClick={() => setConfirm("first")}>
+      <button className="btn danger block" onClick={() => setStep({ kind: "first" })}>
         {a.deleteAccount}
       </button>
 
-      {confirm === "first" && (
-        <Modal title={a.deleteTitle} onClose={() => setConfirm(null)} closeLabel={t.ui.common.close}>
+      {step?.kind === "first" && (
+        <Modal title={a.deleteTitle} onClose={() => setStep(null)} closeLabel={t.ui.common.close}>
           <p className="modal-text">{a.deleteBody}</p>
           <label className="check-row">
             <input type="checkbox" checked={eraseLocal} onChange={(e) => setEraseLocal(e.target.checked)} />
             <span>{a.deleteAlsoLocal}</span>
           </label>
           <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setConfirm(null)}>
+            <button className="btn ghost" onClick={() => setStep(null)}>
               {t.ui.common.cancel}
             </button>
-            <button className="btn danger" onClick={() => setConfirm("second")}>
+            <button className="btn danger" onClick={() => setStep({ kind: "second" })}>
               {a.deleteContinue}
             </button>
           </div>
         </Modal>
       )}
-      {confirm === "second" && (
-        <Modal title={a.deleteConfirmTitle} onClose={() => setConfirm(null)} closeLabel={t.ui.common.close}>
+      {step?.kind === "second" && (
+        <Modal title={a.deleteConfirmTitle} onClose={() => setStep(null)} closeLabel={t.ui.common.close}>
           <p className="modal-text">{eraseLocal ? a.deleteConfirmBodyLocal : a.deleteConfirmBody}</p>
           <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setConfirm(null)} disabled={busy}>
+            <button className="btn ghost" onClick={() => setStep(null)} disabled={busy}>
               {t.ui.common.cancel}
             </button>
             <button className="btn danger" onClick={() => void onDelete()} disabled={busy}>

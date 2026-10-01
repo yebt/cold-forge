@@ -173,6 +173,7 @@ export const pt: UiMessages = {
     errRateLimited: "Muitas tentativas. Espere um minuto e tente de novo.",
     errGeneric: "Algo deu errado. Tente de novo.",
     errInsecure: "A sincronização não está disponível nesta versão.",
+    rejected: "Sincronização pausada: o servidor recusou alguns dados. Fale com o suporte.",
     noticeSignedIn: "Você entrou. Sincronizando seu progresso…",
     noticeLinkInvalid: "Esse link é inválido ou expirou.",
     noticeLinkFailed: "Não deu para entrar. Confira sua conexão.",
@@ -183,6 +184,14 @@ export const pt: UiMessages = {
     linkYes: "Sim, sou eu",
     linkNo: "Não, cancelar",
     syncedNote: "Salvo neste aparelho e sincronizado com sua conta.",
+  },
+  fields: {
+    blank: "Dê um nome.",
+    tooLong: (max) => `Use menos de ${max} caracteres.`,
+    invalid: "Esse texto tem caracteres ocultos ou não suportados. Tente digitar de novo.",
+    emojiInvalid: "Escolha um emoji (um ou dois).",
+    chooseEmoji: "Escolha um emoji",
+    typeEmoji: "Ou digite um",
   },
   conflict: {
     title: "Qual arc vamos manter?",

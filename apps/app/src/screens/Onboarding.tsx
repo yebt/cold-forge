@@ -4,7 +4,9 @@ import { useMemo, useState, type FormEvent } from "react";
 import { formatShortDate, getTranslations } from "../i18n/index.ts";
 import { arcOptions, type ArcOption } from "../lib/derive.ts";
 import type { NewHabitInput, OnboardingInput } from "../lib/model.ts";
-import { firstGrapheme } from "../lib/text.ts";
+import { checkEmoji, checkField } from "../lib/fields.ts";
+import { EmojiField } from "../ui/EmojiField.tsx";
+import { FieldHint } from "../ui/FieldHint.tsx";
 
 interface Props {
   initialLocale: Locale;
@@ -27,11 +29,15 @@ export function Onboarding({ initialLocale, initialName, initialWhy, today, onDo
   const [picked, setPicked] = useState<HabitTemplateId[]>([]);
   const [custom, setCustom] = useState<NewHabitInput[]>([]);
   const [customName, setCustomName] = useState("");
-  const [customEmoji, setCustomEmoji] = useState("");
+  const [customEmoji, setCustomEmoji] = useState("🔥");
   const [why, setWhy] = useState(initialWhy);
   const [name, setName] = useState(initialName);
 
   const count = picked.length + custom.length;
+  const f = ui.fields;
+  const customProblem = checkField("name", customName);
+  const whyProblem = checkField("why", why);
+  const nameProblem = checkField("displayName", name);
   const year = Number(options.winter.window.startDate.slice(0, 4));
 
   const toggle = (id: HabitTemplateId) =>
@@ -39,10 +45,10 @@ export function Onboarding({ initialLocale, initialName, initialWhy, today, onDo
 
   const addCustom = (e: FormEvent) => {
     e.preventDefault();
-    if (!customName.trim()) return;
-    setCustom((c) => [...c, { name: customName.trim(), emoji: firstGrapheme(customEmoji) || "🔥" }]);
+    if (customProblem || !checkEmoji(customEmoji)) return;
+    setCustom((c) => [...c, { name: customName.trim(), emoji: customEmoji.trim() }]);
     setCustomName("");
-    setCustomEmoji("");
+    setCustomEmoji("🔥");
   };
 
   const finish = () => {
@@ -144,24 +150,24 @@ export function Onboarding({ initialLocale, initialName, initialWhy, today, onDo
             ))}
           </div>
           <form className="add-habit" onSubmit={addCustom}>
-            <input
-              className="emoji-input"
+            <EmojiField
               value={customEmoji}
-              onChange={(e) => setCustomEmoji(e.target.value)}
-              placeholder="🔥"
-              aria-label={o.customEmoji}
+              onChange={setCustomEmoji}
+              labels={{ choose: f.chooseEmoji, type: f.typeEmoji, invalid: f.emojiInvalid }}
             />
             <input
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
               placeholder={o.customHabit}
               aria-label={o.customName}
-              maxLength={40}
+              aria-invalid={customName !== "" && customProblem !== null}
+              maxLength={60}
             />
-            <button type="submit" className="btn secondary" disabled={!customName.trim()}>
+            <button type="submit" className="btn secondary" disabled={customProblem !== null}>
               {ui.common.add}
             </button>
           </form>
+          <FieldHint problem={customName === "" ? null : customProblem} field="name" f={f} />
           <p className="muted small">{count > 0 ? o.selected(count) : o.pickOne}</p>
         </section>
       )}
@@ -177,11 +183,20 @@ export function Onboarding({ initialLocale, initialName, initialWhy, today, onDo
             placeholder={o.whyPlaceholder}
             maxLength={140}
             rows={3}
+            aria-invalid={whyProblem !== null}
           />
+          <FieldHint problem={whyProblem} field="why" f={f} />
           <label className="field">
             <span>{o.nameLabel}</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={o.namePlaceholder} maxLength={30} />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={o.namePlaceholder}
+              maxLength={30}
+              aria-invalid={nameProblem !== null}
+            />
           </label>
+          <FieldHint problem={nameProblem} field="displayName" f={f} />
         </section>
       )}
 
@@ -196,7 +211,7 @@ export function Onboarding({ initialLocale, initialName, initialWhy, today, onDo
             {ui.common.next}
           </button>
         ) : (
-          <button className="btn primary forge" onClick={finish}>
+          <button className="btn primary forge" onClick={finish} disabled={whyProblem !== null || nameProblem !== null}>
             🔥 {o.start}
           </button>
         )}

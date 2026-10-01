@@ -12,7 +12,9 @@ import {
   type StoredHabit,
 } from "../lib/model.ts";
 import { exportJSON } from "../lib/repository.ts";
-import { firstGrapheme } from "../lib/text.ts";
+import { checkEmoji, checkField, type FieldProblem } from "../lib/fields.ts";
+import { EmojiField } from "../ui/EmojiField.tsx";
+import { FieldHint } from "../ui/FieldHint.tsx";
 import { remindersSupported, requestReminderPermission, type ReminderPermission } from "../platform/notifications.ts";
 import { shareFile } from "../platform/share.ts";
 import { useSync } from "../sync/useSync.ts";
@@ -35,7 +37,13 @@ export function Settings() {
   const [confirmDelete, setConfirmDelete] = useState<StoredHabit | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
-  const [newEmoji, setNewEmoji] = useState("");
+  const [newEmoji, setNewEmoji] = useState("🔥");
+  const [addTried, setAddTried] = useState(false);
+  const [nameProblem, setNameProblem] = useState<FieldProblem | null>(null);
+  const [whyProblem, setWhyProblem] = useState<FieldProblem | null>(null);
+  const f = ui.fields;
+  const emojiLabels = { choose: f.chooseEmoji, type: f.typeEmoji, invalid: f.emojiInvalid };
+  const newNameProblem = checkField("name", newName);
   const habits = activeHabits(data);
   const signedIn = useSync().account !== null;
   const [toast, setToast] = useState<string | null>(null);
@@ -56,10 +64,12 @@ export function Settings() {
 
   const onAdd = (e: FormEvent) => {
     e.preventDefault();
-    if (!newName.trim()) return;
-    update((d, now) => addHabit(d, { name: newName, emoji: firstGrapheme(newEmoji) || "🔥" }, now));
+    setAddTried(true);
+    if (newNameProblem || !checkEmoji(newEmoji)) return;
+    update((d, now) => addHabit(d, { name: newName, emoji: newEmoji }, now));
     setNewName("");
-    setNewEmoji("");
+    setNewEmoji("🔥");
+    setAddTried(false);
   };
 
   const onExport = async () => {
@@ -130,12 +140,18 @@ export function Settings() {
             defaultValue={data.settings.displayName}
             placeholder={ui.onboarding.namePlaceholder}
             maxLength={30}
+            aria-invalid={nameProblem !== null}
+            onChange={() => setNameProblem(null)}
             onBlur={(e) => {
               const v = e.target.value.trim();
+              const problem = checkField("displayName", v);
+              setNameProblem(problem);
+              if (problem) return; // keep what they typed, explain, don't save
               if (v !== data.settings.displayName) update((d, now) => updateSettings(d, { displayName: v }, now));
             }}
           />
         </label>
+        <FieldHint problem={nameProblem} field="displayName" f={f} />
         <label className="field">
           <span>{s.why}</span>
           <textarea
@@ -144,11 +160,17 @@ export function Settings() {
             placeholder={ui.onboarding.whyPlaceholder}
             maxLength={140}
             rows={2}
+            aria-invalid={whyProblem !== null}
+            onChange={() => setWhyProblem(null)}
             onBlur={(e) => {
+              const problem = checkField("why", e.target.value);
+              setWhyProblem(problem);
+              if (problem) return;
               if (e.target.value.trim() !== data.arc.why) update((d, now) => updateWhy(d, e.target.value, now));
             }}
           />
         </label>
+        <FieldHint problem={whyProblem} field="why" f={f} />
       </section>
 
       <section className="card group">
@@ -162,6 +184,7 @@ export function Settings() {
                 name={habitName(h, m)}
                 saveLabel={ui.common.save}
                 cancelLabel={ui.common.cancel}
+                f={f}
                 onCancel={() => setEditingId(null)}
                 onSave={(name, emoji) => {
                   update((d, now) =>
@@ -200,24 +223,25 @@ export function Settings() {
           )}
         </ul>
         <form className="add-habit" onSubmit={onAdd}>
-          <input
-            className="emoji-input"
-            value={newEmoji}
-            onChange={(e) => setNewEmoji(e.target.value)}
-            placeholder="🔥"
-            aria-label={ui.onboarding.customEmoji}
-          />
+          <EmojiField value={newEmoji} onChange={setNewEmoji} labels={emojiLabels} />
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder={s.addHabit}
             aria-label={ui.onboarding.customName}
-            maxLength={40}
+            aria-invalid={newName !== "" && newNameProblem !== null}
+            maxLength={60}
           />
           <button type="submit" className="btn secondary" disabled={!newName.trim()}>
             {ui.common.add}
           </button>
         </form>
+        {/* Only nag about blank after an attempt; hidden/unsupported characters show as you type. */}
+        <FieldHint
+          problem={newNameProblem === "blank" ? (addTried && newName !== "" ? "blank" : null) : newNameProblem}
+          field="name"
+          f={f}
+        />
       </section>
 
       <AccountSection />
@@ -286,29 +310,39 @@ function EditHabitRow(props: {
   name: string;
   saveLabel: string;
   cancelLabel: string;
+  f: ReturnType<typeof useApp>["t"]["ui"]["fields"];
   onSave: (name: string, emoji: string) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(props.name);
-  const [emoji, setEmoji] = useState(props.habit.emoji);
+  const [emoji, setEmoji] = useState(checkEmoji(props.habit.emoji) ? props.habit.emoji : "🔥");
+  const problem = checkField("name", name);
+  const { f } = props;
   return (
     <li className="habit-edit-row editing">
       <form
         className="add-habit"
         onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim()) props.onSave(name.trim(), firstGrapheme(emoji) || props.habit.emoji);
+          if (!problem && checkEmoji(emoji)) props.onSave(name.trim(), emoji);
         }}
       >
-        <input className="emoji-input" value={emoji} onChange={(e) => setEmoji(e.target.value)} aria-label="Emoji" />
-        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus />
-        <button type="submit" className="btn primary small">
+        <EmojiField value={emoji} onChange={setEmoji} labels={{ choose: f.chooseEmoji, type: f.typeEmoji, invalid: f.emojiInvalid }} />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={60}
+          aria-invalid={problem !== null}
+          autoFocus
+        />
+        <button type="submit" className="btn primary small" disabled={problem !== null}>
           {props.saveLabel}
         </button>
         <button type="button" className="btn ghost small" onClick={props.onCancel}>
           {props.cancelLabel}
         </button>
       </form>
+      <FieldHint problem={problem} field="name" f={f} />
     </li>
   );
 }

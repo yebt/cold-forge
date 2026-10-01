@@ -2,7 +2,7 @@ import type { HabitTemplateId, ISODate } from "@cold-forge/core";
 import type { Locale } from "@cold-forge/i18n";
 import { LIMITS } from "@cold-forge/sync";
 import { newId } from "./ids.ts";
-import { cleanText } from "./text.ts";
+import { repairEmoji, repairHabitName, repairText } from "./fields.ts";
 
 /**
  * Everything the app persists. Every record carries an `updatedAt` ISO timestamp so a future
@@ -83,10 +83,12 @@ export const TEXT_LIMITS = {
 
 export const DATA_LIMITS = { habits: 500, checkIns: 50_000, milestones: 50 } as const;
 
-const cleanName = (v: string) => cleanText(v, TEXT_LIMITS.name);
-const cleanEmoji = (v: string) => cleanText(v, TEXT_LIMITS.emoji);
-const cleanWhy = (v: string) => cleanText(v, TEXT_LIMITS.why, true);
-const cleanDisplayName = (v: string) => cleanText(v, TEXT_LIMITS.displayName);
+// Everything stored passes the sync API's rules, so a value typed today can't break sync later.
+const cleanName = (v: string) => repairText("name", v);
+/** A valid emoji, or "" so callers can fall back. */
+const cleanEmoji = (v: string) => (repairEmoji(v.trim()) === v.trim() ? v.trim() : "");
+const cleanWhy = (v: string) => repairText("why", v);
+const cleanDisplayName = (v: string) => repairText("displayName", v);
 
 /** Timestamp of the synced profile fields. */
 export function profileUpdatedAt(settings: Settings): string {
@@ -157,7 +159,7 @@ function makeHabit(h: NewHabitInput, order: number, now: string): StoredHabit {
   return {
     id: newId(),
     ...(h.templateId ? { templateId: h.templateId } : {}),
-    name: cleanName(h.name),
+    name: repairHabitName(h.name, !!h.templateId),
     emoji: cleanEmoji(h.emoji) || "🔥",
     order,
     createdAt: now,

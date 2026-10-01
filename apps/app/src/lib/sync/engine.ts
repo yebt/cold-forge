@@ -1,10 +1,12 @@
 import type { ISODate } from "@cold-forge/core";
-import { SYNC_PROTOCOL_VERSION, emptyChanges, mergeChanges, type SessionResponse, type SyncChanges } from "@cold-forge/sync";
+import { emptyChanges, mergeChanges, type SessionResponse, type SyncChanges } from "@cold-forge/sync";
 import type { AppData } from "../model.ts";
 import type { ApiClient, ApiError, ApiResult } from "./api.ts";
 import { decideFirstSync, summarizeServerArc, type ArcSummary } from "./conflict.ts";
 import { linkNeedsConfirmation, type PendingCodeRequest } from "./linkConfirm.ts";
 import { collectDirty, isEmpty, markAcked, splitBatches } from "./dirty.ts";
+import { prepareOutgoing } from "./outgoing.ts";
+import { httpTransport, type SyncTransport } from "./transport.ts";
 import { applyRemote, localRecords } from "./mapping.ts";
 import { emptySyncState, forgetAccount, parseSyncState, serializeSyncState, type SyncState } from "./state.ts";
 import { parseSession } from "./validate.ts";
@@ -18,6 +20,8 @@ export type SyncStatus =
   | "rateLimited"
   /** The account is over its storage quota: automatic retries stop until the next manual sync. */
   | "quota"
+  /** The server refused our data (400): sync is paused, no retry loop ("contact support"). */
+  | "rejected"
   | "conflict";
 export type SyncNotice = "signedIn" | "linkInvalid" | "linkFailed" | "sessionExpired" | "accountDeleted" | null;
 export type SyncReason = "start" | "resume" | "online" | "signin" | "manual" | "local" | "retry";
@@ -49,7 +53,10 @@ export interface Timers {
 }
 
 export interface SyncEngineDeps {
+  /** Account operations (sign-in links, logout, delete). */
   api: ApiClient;
+  /** Record exchange. Defaults to the HTTP API's /v1/sync. */
+  transport?: SyncTransport;
   storage: SyncStorage;
   /** The latest AppData (null while onboarding). */
   getData(): AppData | null;
@@ -93,6 +100,8 @@ export interface SyncEngine {
 }
 
 const MAX_PAGES = 500;
+/** The API allows 20 sync calls/min; stay under it on our own instead of collecting 429s. */
+const SYNC_BUDGET = { calls: 15, windowMs: 60_000 };
 const RESUME_THROTTLE_MS = 15_000;
 const BACKOFF_BASE_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60_000;
@@ -101,6 +110,7 @@ type Outcome = { ok: true } | { ok: false; error: ApiError } | { ok: "stale" };
 
 export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   const { api, storage } = deps;
+  const transport = deps.transport ?? httpTransport(api);
   const now = deps.now ?? Date.now;
   const timers: Timers = deps.timers ?? {
     set: (fn, ms) => setTimeout(fn, ms),
@@ -122,6 +132,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   let lastSuccessAt = 0;
   /** Cursor resets in a row; a server that keeps rejecting cursors must not loop us forever. */
   let cursorResets = 0;
+  /** Times of recent /v1/sync calls (client-side rate budget). */
+  let syncCalls: number[] = [];
   let disposed = false;
   let pendingRequest: PendingCodeRequest | null = null;
   /** Verified via a link, not yet confirmed: never persisted, never used for sync. */
@@ -205,18 +217,40 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     if (r.changed && r.data) deps.setData(r.data);
   }
 
+  /** Local changes that can be sent: validated/repaired; invalid ones stay pending (never block the batch). */
+  function pushable(warn = false): SyncChanges {
+    const dirty = collectDirty(localRecords(deps.getData(), state.history), state.acked);
+    if (isEmpty(dirty)) return dirty;
+    const out = prepareOutgoing(dirty, now());
+    if (warn && (out.skipped > 0 || out.repaired > 0)) {
+      // Counts only: never record contents (they are personal data).
+      console.warn(`[sync] outgoing records: ${out.repaired} repaired, ${out.skipped} held back as invalid`);
+    }
+    return out.changes;
+  }
+
+  async function budgetedSync(token: string, req: { cursor: string | null; changes: SyncChanges }) {
+    const t = now();
+    syncCalls = syncCalls.filter((c) => t - c < SYNC_BUDGET.windowMs);
+    if (syncCalls.length >= SYNC_BUDGET.calls) {
+      const wait = syncCalls[0]! + SYNC_BUDGET.windowMs - t;
+      return { ok: false as const, error: { kind: "rate_limited" as const, retryAfterMs: Math.max(1_000, wait) } };
+    }
+    syncCalls.push(t);
+    return transport.exchange(token, req);
+  }
+
   // ---- One sync run ----
 
   /** Push local changes in batches and pull everything after the cursor (following `hasMore`). */
   async function exchange(token: string, gen: number): Promise<Outcome> {
-    const dirty = collectDirty(localRecords(deps.getData(), state.history), state.acked);
-    const batches = splitBatches(dirty);
+    const batches = splitBatches(pushable(true));
     let i = 0;
     let pages = 0;
     let more = false;
     do {
       const batch = batches[i++] ?? emptyChanges();
-      const res = await api.sync(token, { protocol: SYNC_PROTOCOL_VERSION, cursor: state.cursor, changes: batch });
+      const res = await budgetedSync(token, { cursor: state.cursor, changes: batch });
       if (gen !== generation) return { ok: "stale" };
       if (!res.ok) return res;
       markAcked(state.acked, batch);
@@ -236,7 +270,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     let pages = 0;
     let more = true;
     while (more && pages++ < MAX_PAGES) {
-      const res = await api.sync(token, { protocol: SYNC_PROTOCOL_VERSION, cursor, changes: emptyChanges() });
+      const res = await budgetedSync(token, { cursor, changes: emptyChanges() });
       if (gen !== generation) return { ok: "stale" };
       if (!res.ok) return res;
       staged = mergeChanges(staged, res.value.changes);
@@ -274,10 +308,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
       state.conflict = null;
       await persistState();
     }
-    if (reason === "local" && state.cursor !== null) {
-      const dirty = collectDirty(localRecords(deps.getData(), state.history), state.acked);
-      if (isEmpty(dirty)) return;
-    }
+    if (reason === "local" && state.cursor !== null && isEmpty(pushable())) return;
 
     emit({ ...baseSnapshot(), status: "syncing" });
     const outcome = state.cursor === null ? await firstSync(token, gen) : await exchange(token, gen);
@@ -291,7 +322,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
       await persistState();
       emit({ ...baseSnapshot(), status: state.conflict ? "conflict" : "idle" });
       // Applying the server's data can itself produce something to push (e.g. a profile fix-up).
-      if (!state.conflict && !isEmpty(collectDirty(localRecords(deps.getData(), state.history), state.acked))) {
+      if (!state.conflict && !isEmpty(pushable())) {
         notifyLocalChange();
       }
       return;
@@ -315,6 +346,11 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
         break;
       case "quota_exceeded":
         emit({ ...baseSnapshot(), status: "quota" });
+        return;
+      case "invalid_request":
+      case "bad_request":
+        // Same data, same answer: don't loop. A manual "Sync now" (or the next edit) tries again.
+        emit({ ...baseSnapshot(), status: "rejected" });
         return;
       case "rate_limited":
         blockedUntil = now() + error.retryAfterMs;

@@ -1,5 +1,5 @@
 import type { AppData } from "./model.ts";
-import { parseAppData } from "./parse.ts";
+import { validateAppData } from "./parse.ts";
 
 /** Minimal async key-value store: Capacitor Preferences on device, memory in tests. */
 export interface KeyValueStore {
@@ -25,11 +25,17 @@ export function createRepository(store: KeyValueStore, key = STORAGE_KEY): Repos
     async load() {
       const raw = await store.get(key);
       if (!raw) return null;
+      let parsed: unknown;
       try {
-        return parseAppData(JSON.parse(raw));
+        parsed = JSON.parse(raw);
       } catch {
         return null;
       }
+      const r = validateAppData(parsed, "storage");
+      if (!r.ok) return null;
+      // Persist repairs right away (their bumped updatedAt also makes them sync).
+      if (r.repaired > 0) await store.set(key, JSON.stringify(r.data)).catch(() => undefined);
+      return r.data;
     },
     async save(data) {
       await store.set(key, JSON.stringify(data));

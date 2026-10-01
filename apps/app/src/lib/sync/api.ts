@@ -17,6 +17,8 @@ export type ApiError =
   | { kind: "invalid_cursor" }
   /** 422: the account hit its storage quota. Retrying won't help. */
   | { kind: "quota_exceeded" }
+  /** 400 invalid_request: the server refused our data. Retrying the same data won't help. */
+  | { kind: "invalid_request" }
   | { kind: "bad_request" }
   | { kind: "server"; status: number }
   /** The server answered something that doesn't match the contract. */
@@ -131,7 +133,10 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
       // Error bodies are `{ error: ApiErrorCode, detail? }`; only the code is used (never displayed raw).
       const code = typeof json === "object" && json !== null ? (json as { error?: unknown }).error : undefined;
       if (res.status === 422 || code === "quota_exceeded") return { ok: false, error: { kind: "quota_exceeded" } };
-      if (res.status === 400 && (code === "invalid_or_expired" || code === "invalid_email" || code === "invalid_cursor")) {
+      if (
+        res.status === 400 &&
+        (code === "invalid_or_expired" || code === "invalid_email" || code === "invalid_cursor" || code === "invalid_request")
+      ) {
         return { ok: false, error: { kind: code } };
       }
       if (res.status >= 400 && res.status < 500) return { ok: false, error: { kind: "bad_request" } };

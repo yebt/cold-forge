@@ -63,7 +63,7 @@ describe("import validation", () => {
     expect(errorOf(envelope({ ...raw(sample()), version: 2 }))).toBe("invalid");
   });
 
-  test("rejects long strings and control/bidi characters", () => {
+  test("rejects over-long strings (a real export can't contain them)", () => {
     const long = raw(sample());
     long.habits[0].name = "x".repeat(61);
     expect(errorOf(envelope(long))).toBe("invalid");
@@ -73,18 +73,32 @@ describe("import validation", () => {
     const name = raw(sample());
     name.settings.displayName = "n".repeat(41);
     expect(errorOf(envelope(name))).toBe("invalid");
-    const emoji = raw(sample());
-    emoji.habits[0].emoji = "🔥".repeat(17);
-    expect(errorOf(envelope(emoji))).toBe("invalid");
-    for (const bad of ["evil‮gnp.exe", "a\u0000b", "line\nbreak", "⁦x"]) {
+  });
+
+  test("repairs invisible/bidi/control characters and bad emoji instead of failing sync later", () => {
+    for (const [bad, fixed] of [
+      ["evil\u202Egnp.exe", "evilgnp.exe"],
+      ["a\u0000b", "ab"],
+      ["line\nbreak", "line break"],
+      ["\u2066x", "x"],
+      ["zero\u200Bwidth", "zerowidth"],
+      ["\u200B\u200B", "Habit"], // renders as nothing -> fallback name
+    ] as const) {
       const d = raw(sample());
       d.habits[0].name = bad;
-      expect(errorOf(envelope(d))).toBe("invalid");
+      const r = parseImportText(envelope(d));
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.data.habits[0]!.name).toBe(fixed);
     }
-    // The why may have line breaks.
+    const emoji = raw(sample());
+    emoji.habits[0].emoji = "🔥".repeat(17);
+    const r = parseImportText(envelope(emoji));
+    expect(r.ok && r.data.habits[0]!.emoji).toBe("🔥");
+    // The why may keep line breaks.
     const ok = raw(sample());
     ok.arc.why = "line one\nline two";
-    expect(errorOf(envelope(ok))).toBe("ok");
+    const w = parseImportText(envelope(ok));
+    expect(w.ok && w.data.arc.why).toBe("line one\nline two");
   });
 
   test("rejects bad ids, dates, timestamps and too many records", () => {

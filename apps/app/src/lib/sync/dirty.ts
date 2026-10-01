@@ -8,13 +8,21 @@ export const keyOf = {
   profile: () => "p",
 };
 
+/**
+ * Same instant? Compared by value, not by string: the server echoes timestamps with exactly
+ * three fractional digits, so `…:00Z` and `…:00.000Z` must count as equal.
+ */
+export function sameInstant(a: string | undefined, b: string): boolean {
+  return a !== undefined && (a === b || Date.parse(a) === Date.parse(b));
+}
+
 /** Records whose `updatedAt` differs from what the server is known to hold. */
 export function collectDirty(all: SyncChanges, acked: ReadonlyMap<string, string>): SyncChanges {
   return {
-    arcs: all.arcs.filter((a) => acked.get(keyOf.arc(a)) !== a.updatedAt),
-    habits: all.habits.filter((h) => acked.get(keyOf.habit(h)) !== h.updatedAt),
-    checkIns: all.checkIns.filter((c) => acked.get(keyOf.checkIn(c)) !== c.updatedAt),
-    profile: all.profile && acked.get(keyOf.profile()) !== all.profile.updatedAt ? all.profile : null,
+    arcs: all.arcs.filter((a) => !sameInstant(acked.get(keyOf.arc(a)), a.updatedAt)),
+    habits: all.habits.filter((h) => !sameInstant(acked.get(keyOf.habit(h)), h.updatedAt)),
+    checkIns: all.checkIns.filter((c) => !sameInstant(acked.get(keyOf.checkIn(c)), c.updatedAt)),
+    profile: all.profile && !sameInstant(acked.get(keyOf.profile()), all.profile.updatedAt) ? all.profile : null,
   };
 }
 

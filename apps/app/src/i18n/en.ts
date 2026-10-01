@@ -172,6 +172,7 @@ export const en = {
     errRateLimited: "Too many tries. Wait a minute and try again.",
     errGeneric: "Something went wrong. Please try again.",
     errInsecure: "Sync is not available in this build.",
+    rejected: "Sync paused: the server refused some data. Please contact support.",
     noticeSignedIn: "Signed in. Syncing your progress…",
     noticeLinkInvalid: "That sign-in link is invalid or has expired.",
     noticeLinkFailed: "Couldn't sign in. Check your connection.",
@@ -182,6 +183,14 @@ export const en = {
     linkYes: "Yes, it's me",
     linkNo: "No, cancel",
     syncedNote: "Saved on this device and synced to your account.",
+  },
+  fields: {
+    blank: "Give it a name.",
+    tooLong: (max: number) => `Keep it under ${max} characters.`,
+    invalid: "That text has hidden or unsupported characters. Try retyping it.",
+    emojiInvalid: "Pick an emoji (one or two).",
+    chooseEmoji: "Choose an emoji",
+    typeEmoji: "Or type one",
   },
   conflict: {
     title: "Which arc should we keep?",

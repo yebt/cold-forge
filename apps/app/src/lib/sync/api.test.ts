@@ -193,3 +193,13 @@ describe("API error codes", () => {
     expect(calls[1]!.url).toBe("https://x.dev/v1/me");
   });
 });
+
+describe("stricter contract codes", () => {
+  test("invalid_request", async () => {
+    const mk = (res: () => Response) => createApiClient({ baseUrl: "https://x.dev", fetch: fakeFetch(res).fetch });
+    expect(await mk(() => json(400, { error: "invalid_request", detail: "changes.habits[0].emoji" })).sync(TOKEN, syncReq)).toEqual({
+      ok: false,
+      error: { kind: "invalid_request" },
+    });
+  });
+});
