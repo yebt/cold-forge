@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ConfigError, DEV_CORS_ORIGINS, loadConfig } from "./config.ts";
 
-const SECRET = "s".repeat(48);
+const SECRET = "kQ9v2Zr7Xw4Lp1Hs8Ty3Bn6Mc0Df5Gj+/Ae";
 const PROD = {
   NODE_ENV: "production",
   AUTH_SECRET: SECRET,
@@ -58,12 +58,15 @@ describe("config", () => {
     expect(problems({ ...PROD, MAIL_FROM: "a@b.com\r\nBcc: x@y.com" })).toHaveLength(1);
   });
 
-  test("development defaults: ephemeral secret, dev origins, console mailer", () => {
-    const c = loadConfig({});
+  test("development defaults: ephemeral secret, dev origins, loopback, console mailer only on opt-in", () => {
+    const c = loadConfig({ NODE_ENV: "development", DEV_CONSOLE_MAILER: "1" });
     expect(c.env).toBe("development");
     expect(c.ephemeralSecret).toBe(true);
     expect(c.authSecret.length).toBeGreaterThanOrEqual(32);
     expect([...c.corsOrigins]).toEqual(DEV_CORS_ORIGINS);
+    expect(c.hostname).toBe("127.0.0.1");
     expect(c.smtp).toBeNull();
+    expect(c.devConsoleMailer).toBe(true);
+    expect(c.mailHourlyCap).toBe(500);
   });
 });

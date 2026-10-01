@@ -27,3 +27,18 @@ export function formatShortDate(date: string, locale: Locale): string {
     day: "numeric",
   });
 }
+
+/** BCP 47 tag used for Intl formatting. */
+export function localeTag(locale: Locale): string {
+  return locale === "pt" ? "pt-BR" : locale === "es" ? "es-419" : "en-US";
+}
+
+/** "2 minutes ago" / "hace 2 minutos" / "há 2 minutos"; `justNow` under a minute. */
+export function formatAgo(iso: string, nowMs: number, locale: Locale, justNow: string): string {
+  const diff = Math.max(0, nowMs - Date.parse(iso));
+  if (!Number.isFinite(diff) || diff < 60_000) return justNow;
+  const rtf = new Intl.RelativeTimeFormat(localeTag(locale), { numeric: "auto" });
+  if (diff < 3_600_000) return rtf.format(-Math.floor(diff / 60_000), "minute");
+  if (diff < 86_400_000) return rtf.format(-Math.floor(diff / 3_600_000), "hour");
+  return rtf.format(-Math.floor(diff / 86_400_000), "day");
+}

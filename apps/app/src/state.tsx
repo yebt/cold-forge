@@ -13,6 +13,8 @@ export interface AppState {
   derived: Derived;
   update: (fn: Updater) => void;
   reset: () => Promise<void>;
+  /** Re-opens the "which arc to keep" dialog after "Decide later". */
+  showConflict: () => void;
 }
 
 export const AppContext = createContext<AppState | null>(null);

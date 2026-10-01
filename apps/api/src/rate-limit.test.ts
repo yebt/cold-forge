@@ -33,7 +33,7 @@ describe("MemoryRateLimiter", () => {
 
   test("sweep drops stale buckets and the bucket count is capped", async () => {
     let now = 0;
-    const rl = new MemoryRateLimiter(() => now, 10);
+    const rl = new MemoryRateLimiter(() => now, { maxBuckets: 10, failClosed: false });
     for (let i = 0; i < 50; i++) expect(await rl.take(`k${i}`, [{ limit: 1, windowMs: 100 }])).toBe(true);
     expect(rl.size).toBeLessThanOrEqual(10);
     now = 1000;

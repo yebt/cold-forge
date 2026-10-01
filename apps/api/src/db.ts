@@ -9,6 +9,7 @@
  * - Times owned by the server are epoch milliseconds (INTEGER); client timestamps stay ISO TEXT.
  */
 import { Database } from "bun:sqlite";
+import { chmodSync, existsSync } from "node:fs";
 
 const MIGRATIONS: readonly string[] = [
   /* 0 → 1 */ `
@@ -96,6 +97,15 @@ const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX profiles_seq ON profiles (user_id, seq);
   `,
+  /* 1 → 2 */ `
+  -- Wrong login codes per email, across requests (online guessing cap). A fixed 24 h window that
+  -- starts at the first failure; a successful sign-in deletes the row.
+  CREATE TABLE verify_failures (
+    email         TEXT    NOT NULL PRIMARY KEY,
+    failures      INTEGER NOT NULL CHECK (failures >= 0),
+    window_start  INTEGER NOT NULL
+  ) STRICT;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -111,7 +121,20 @@ export function openDatabase(path: string): Database {
   // Overwrite deleted content so an account deletion does not leave data in free pages.
   db.exec("PRAGMA secure_delete = ON");
   migrate(db);
+  restrictDatabaseFiles(path);
   return db;
+}
+
+/** chmod 600 the database and its WAL/SHM side files (they hold user data and login digests). */
+export function restrictDatabaseFiles(path: string): void {
+  if (path === ":memory:" || path === "" || path.startsWith("file:")) return;
+  for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+    try {
+      if (existsSync(file)) chmodSync(file, 0o600);
+    } catch {
+      // Not fatal (e.g. a read-only mount); the umask still applies to new files.
+    }
+  }
 }
 
 export function migrate(db: Database): void {

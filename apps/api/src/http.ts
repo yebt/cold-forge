@@ -86,6 +86,45 @@ export function clientIp(socketIp: string | null | undefined, xff: string | null
   return candidate && isIP(candidate) ? candidate : socket;
 }
 
+/**
+ * The key used to rate limit an address. IPv4 → the address. IPv6 → its /64 prefix (one
+ * customer typically owns a whole /64, so per-/128 keys would let them rotate for free).
+ * IPv4-mapped/compatible forms (::ffff:1.2.3.4) map back to the IPv4 address.
+ */
+export function ipRateKey(ip: string): string {
+  const kind = isIP(ip);
+  if (kind === 4) return ip;
+  if (kind !== 6) return ip; // "unknown"
+  const hextets = expandIpv6(ip);
+  if (!hextets) return ip;
+  // ::ffff:a.b.c.d (mapped) → IPv4
+  if (hextets.slice(0, 5).every((h) => h === 0) && hextets[5] === 0xffff) {
+    return `${hextets[6]! >> 8}.${hextets[6]! & 255}.${hextets[7]! >> 8}.${hextets[7]! & 255}`;
+  }
+  return `${hextets.slice(0, 4).map((h) => h.toString(16)).join(":")}::/64`;
+}
+
+/** Eight 16-bit groups of an IPv6 address (handles "::", an embedded IPv4 tail and a zone id), or null. */
+export function expandIpv6(ip: string): number[] | null {
+  let addr = ip.split("%")[0]!.toLowerCase();
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(addr);
+  if (v4) {
+    const o = v4.slice(1).map(Number);
+    if (o.some((x) => x > 255)) return null;
+    addr = addr.slice(0, v4.index) + `${((o[0]! << 8) | o[1]!).toString(16)}:${((o[2]! << 8) | o[3]!).toString(16)}`;
+  }
+  const halves = addr.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part ? part.split(":") : []);
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array<string>(fill).fill("0"), ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
 // --- body ---------------------------------------------------------------------------------------
 
 /** Requires `Content-Type: application/json` (optionally `; charset=utf-8`). */
@@ -141,10 +180,13 @@ export async function readJson(req: Request, maxBytes: number = LIMITS.maxBodyBy
   }
 }
 
-/** Extracts the token from `Authorization: Bearer <token>`. Cookies are never consulted. */
+/**
+ * Extracts the token from `Authorization: Bearer <token>`. The scheme is case-insensitive
+ * (RFC 9110 §11.1). Cookies are never consulted.
+ */
 export function bearerToken(req: Request): string | null {
   const header = req.headers.get("Authorization");
   if (!header) return null;
-  const m = /^Bearer ([A-Za-z0-9_-]{1,128})$/.exec(header);
+  const m = /^bearer +([A-Za-z0-9_-]{1,128})$/i.exec(header);
   return m ? m[1]! : null;
 }

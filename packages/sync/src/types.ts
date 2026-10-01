@@ -88,6 +88,8 @@ export type ApiErrorCode =
   | "invalid_or_expired"
   | "invalid_email"
   | "invalid_request"
+  | "invalid_json"
+  | "invalid_content_length"
   | "invalid_cursor"
   | "quota_exceeded"
   | "rate_limited"
@@ -95,6 +97,9 @@ export type ApiErrorCode =
   | "unsupported_media_type"
   | "payload_too_large"
   | "origin_not_allowed"
+  | "header_not_allowed"
+  /** `DELETE /v1/me` with a session older than 10 minutes: sign in again (fresh code/link), then retry. */
+  | "reauth_required"
   | "not_found"
   | "method_not_allowed"
   | "internal_error";

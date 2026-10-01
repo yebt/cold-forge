@@ -1,5 +1,5 @@
 import { LOCALES, LOCALE_NAMES } from "@cold-forge/i18n";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { habitName } from "../lib/derive.ts";
 import {
   activeHabits,
@@ -15,7 +15,10 @@ import { exportJSON } from "../lib/repository.ts";
 import { firstGrapheme } from "../lib/text.ts";
 import { remindersSupported, requestReminderPermission, type ReminderPermission } from "../platform/notifications.ts";
 import { shareFile } from "../platform/share.ts";
+import { useSync } from "../sync/useSync.ts";
 import { useApp } from "../state.tsx";
+import { AccountSection } from "./AccountSection.tsx";
+import { ImportData } from "./ImportData.tsx";
 import { Modal } from "../ui/Modal.tsx";
 import { Toggle } from "../ui/Toggle.tsx";
 
@@ -34,6 +37,13 @@ export function Settings() {
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState("");
   const habits = activeHabits(data);
+  const signedIn = useSync().account !== null;
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(id);
+  }, [toast]);
 
   const toggleReminders = async (on: boolean) => {
     if (on) {
@@ -210,20 +220,29 @@ export function Settings() {
         </form>
       </section>
 
+      <AccountSection />
+
       <section className="card group">
         <h2>{s.data}</h2>
         <button className="btn secondary block" onClick={onExport}>
           ⬇️ {s.export}
         </button>
+        <ImportData onDone={setToast} />
         <button className="btn danger block" onClick={() => setConfirmReset(true)}>
           {s.reset}
         </button>
         <p className="muted small center">
-          🔒 {s.offline}
+          🔒 {signedIn ? ui.account.syncedNote : s.offline}
           <br />
           {s.version(APP_VERSION)}
         </p>
       </section>
+
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
+        </div>
+      )}
 
       {confirmReset && (
         <Modal title={s.reset} onClose={() => setConfirmReset(false)} closeLabel={ui.common.close}>

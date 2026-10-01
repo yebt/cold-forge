@@ -1,6 +1,8 @@
-import { isISODate, type HabitTemplateId, type ISODate } from "@cold-forge/core";
-import { isLocale, type Locale } from "@cold-forge/i18n";
+import type { HabitTemplateId, ISODate } from "@cold-forge/core";
+import type { Locale } from "@cold-forge/i18n";
+import { LIMITS } from "@cold-forge/sync";
 import { newId } from "./ids.ts";
+import { cleanText } from "./text.ts";
 
 /**
  * Everything the app persists. Every record carries an `updatedAt` ISO timestamp so a future
@@ -50,6 +52,12 @@ export interface Settings {
   reminderTime: string;
   displayName: string;
   updatedAt: string;
+  /**
+   * When the account-level fields (displayName, locale, current arc) last changed. Device-only
+   * prefs (sound, reminders…) don't bump it, so toggling them never overwrites another device's
+   * name. Missing in data from before sync existed: `settings.updatedAt` is used instead.
+   */
+  profileUpdatedAt?: string;
 }
 
 export interface AppData {
@@ -64,6 +72,26 @@ export interface AppData {
 }
 
 export const DEFAULT_REMINDER_TIME = "21:00";
+
+/** Caps shared with the sync API (code points). */
+export const TEXT_LIMITS = {
+  name: LIMITS.nameLength,
+  why: LIMITS.whyLength,
+  displayName: LIMITS.displayNameLength,
+  emoji: LIMITS.emojiLength,
+} as const;
+
+export const DATA_LIMITS = { habits: 500, checkIns: 50_000, milestones: 50 } as const;
+
+const cleanName = (v: string) => cleanText(v, TEXT_LIMITS.name);
+const cleanEmoji = (v: string) => cleanText(v, TEXT_LIMITS.emoji);
+const cleanWhy = (v: string) => cleanText(v, TEXT_LIMITS.why, true);
+const cleanDisplayName = (v: string) => cleanText(v, TEXT_LIMITS.displayName);
+
+/** Timestamp of the synced profile fields. */
+export function profileUpdatedAt(settings: Settings): string {
+  return settings.profileUpdatedAt ?? settings.updatedAt;
+}
 
 export function checkInKey(habitId: string, date: ISODate): string {
   return `${habitId}|${date}`;
@@ -102,8 +130,10 @@ export function createAppData(input: OnboardingInput, now: string): AppData {
   const settings: Settings = {
     ...(input.settings ?? defaultSettings(input.locale, now)),
     locale: input.locale,
-    displayName: input.displayName.trim(),
+    displayName: cleanDisplayName(input.displayName),
     updatedAt: now,
+    // A new arc changes the account's current arc.
+    profileUpdatedAt: now,
   };
   return {
     version: SCHEMA_VERSION,
@@ -112,7 +142,7 @@ export function createAppData(input: OnboardingInput, now: string): AppData {
       kind: input.kind,
       startDate: input.window.startDate,
       endDate: input.window.endDate,
-      why: input.why.trim(),
+      why: cleanWhy(input.why),
       createdAt: now,
       updatedAt: now,
     },
@@ -127,8 +157,8 @@ function makeHabit(h: NewHabitInput, order: number, now: string): StoredHabit {
   return {
     id: newId(),
     ...(h.templateId ? { templateId: h.templateId } : {}),
-    name: h.name.trim(),
-    emoji: h.emoji.trim() || "🔥",
+    name: cleanName(h.name),
+    emoji: cleanEmoji(h.emoji) || "🔥",
     order,
     createdAt: now,
     updatedAt: now,
@@ -167,9 +197,9 @@ export function updateHabit(
     habits: data.habits.map((h) => {
       if (h.id !== habitId) return h;
       const next: StoredHabit = { ...h, updatedAt: now };
-      if (patch.emoji !== undefined) next.emoji = patch.emoji.trim() || h.emoji;
-      if (patch.name !== undefined && patch.name.trim()) {
-        next.name = patch.name.trim();
+      if (patch.emoji !== undefined) next.emoji = cleanEmoji(patch.emoji) || h.emoji;
+      if (patch.name !== undefined && cleanName(patch.name)) {
+        next.name = cleanName(patch.name);
         // A renamed template habit keeps the custom name in every language.
         delete next.templateId;
       }
@@ -203,47 +233,26 @@ export function moveHabit(data: AppData, habitId: string, direction: -1 | 1, now
   };
 }
 
-export function updateSettings(data: AppData, patch: Partial<Omit<Settings, "updatedAt">>, now: string): AppData {
-  return { ...data, settings: { ...data.settings, ...patch, updatedAt: now } };
+export function updateSettings(
+  data: AppData,
+  patch: Partial<Omit<Settings, "updatedAt" | "profileUpdatedAt">>,
+  now: string,
+): AppData {
+  const next: Settings = { ...data.settings, ...patch, updatedAt: now };
+  if (patch.displayName !== undefined) next.displayName = cleanDisplayName(patch.displayName);
+  const profileChanged =
+    (patch.displayName !== undefined && next.displayName !== data.settings.displayName) ||
+    (patch.locale !== undefined && patch.locale !== data.settings.locale);
+  if (profileChanged) next.profileUpdatedAt = now;
+  return { ...data, settings: next };
 }
 
 export function updateWhy(data: AppData, why: string, now: string): AppData {
-  return { ...data, arc: { ...data.arc, why: why.trim(), updatedAt: now } };
+  return { ...data, arc: { ...data.arc, why: cleanWhy(why), updatedAt: now } };
 }
 
 export function markMilestonesCelebrated(data: AppData, days: readonly number[]): AppData {
   const set = new Set([...data.celebratedMilestones, ...days]);
   if (set.size === data.celebratedMilestones.length) return data;
   return { ...data, celebratedMilestones: [...set].sort((a, b) => a - b) };
-}
-
-// ---- Validation for data loaded from storage or an import. ----
-
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
-const isStr = (v: unknown): v is string => typeof v === "string";
-const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-/** Returns the data if it has the expected shape, otherwise `null` (treated as a fresh install). */
-export function parseAppData(raw: unknown): AppData | null {
-  if (!isObj(raw) || raw.version !== SCHEMA_VERSION) return null;
-  const { arc, habits, checkIns, settings, celebratedMilestones } = raw;
-  if (!isObj(arc) || !isStr(arc.id) || !isISODate(arc.startDate) || !isISODate(arc.endDate)) return null;
-  if (arc.kind !== "winter" && arc.kind !== "custom") return null;
-  if (!Array.isArray(habits) || !isObj(checkIns) || !isObj(settings)) return null;
-  if (!habits.every((h) => isObj(h) && isStr(h.id) && isStr(h.name) && isStr(h.emoji) && typeof h.order === "number"))
-    return null;
-  for (const c of Object.values(checkIns)) {
-    if (!isObj(c) || !isStr(c.habitId) || !isISODate(c.date) || typeof c.done !== "boolean") return null;
-  }
-  if (!isLocale(settings.locale)) return null;
-  const reminderTime = isStr(settings.reminderTime) && TIME.test(settings.reminderTime)
-    ? settings.reminderTime
-    : DEFAULT_REMINDER_TIME;
-  return {
-    ...(raw as unknown as AppData),
-    settings: { ...(settings as unknown as Settings), reminderTime },
-    celebratedMilestones: Array.isArray(celebratedMilestones)
-      ? celebratedMilestones.filter((n): n is number => typeof n === "number")
-      : [],
-  };
 }

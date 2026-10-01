@@ -121,13 +121,17 @@ describe("magic link login", () => {
     expect((await verifyCode(id, code)).status).toBe(200);
   });
 
-  test("a new request invalidates the older one", async () => {
+  test("a new request does NOT invalidate the older one; a sign-in consumes all of them", async () => {
     const first = await requestId(await magic());
     const firstMail = h.mails[0]!;
+    h.advance(31_000); // per-email cooldown
     const second = await requestId(await magic());
-    expect((await verifyCode(first, firstMail.code)).status).toBe(400);
+    expect(h.mails).toHaveLength(2);
+    expect((await verifyCode(first, firstMail.code)).status).toBe(200);
+    // single sign-in consumed every pending request for the email
+    expect((await verifyCode(second, h.mails[1]!.code)).status).toBe(400);
     expect((await h.post("/v1/auth/verify", { token: firstMail.link.split("token=")[1] })).status).toBe(400);
-    expect((await verifyCode(second, h.mails[1]!.code)).status).toBe(200);
+    expect(h.db.query("SELECT COUNT(*) AS n FROM login_requests").get()).toEqual({ n: 0 });
   });
 
   test("a code only works with its own request id", async () => {
@@ -152,8 +156,11 @@ describe("magic link login", () => {
 });
 
 describe("rate limits", () => {
-  test("per email: silently stops sending but still answers 202 with the same shape", async () => {
-    for (let i = 0; i < 3; i++) expect((await magic("victim@example.com")).status).toBe(202);
+  test("per (email, IP): silently stops sending but still answers 202 with the same shape", async () => {
+    for (let i = 0; i < 3; i++) {
+      expect((await magic("victim@example.com")).status).toBe(202);
+      h.advance(31_000); // per-email cooldown
+    }
     const limited = await magic("victim@example.com");
     expect(limited.status).toBe(202);
     expect(Object.keys((await limited.json()) as object)).toEqual(["requestId"]);
@@ -164,14 +171,27 @@ describe("rate limits", () => {
     expect(h.mails).toHaveLength(4);
   });
 
-  test("per email: 10 per day", async () => {
-    for (let i = 0; i < 12; i++) {
-      await magic(`daily@example.com`);
-      h.advance(5 * MINUTE + 1);
-      // keep the per-IP limit from interfering
-      if (i % 3 === 2) h.advance(15 * MINUTE);
+  test("per email: 30 s cooldown between sends (silent)", async () => {
+    await magic("cool@example.com");
+    h.advance(29_000);
+    await magic("cool@example.com");
+    expect(h.mails).toHaveLength(1);
+    h.advance(1_001);
+    await magic("cool@example.com");
+    expect(h.mails).toHaveLength(2);
+  });
+
+  test("per email: 20 per day, shared by all IPs", async () => {
+    const h2 = startHarness({ env: { TRUST_PROXY: "1" } });
+    try {
+      for (let i = 0; i < 25; i++) {
+        await h2.post("/v1/auth/magic-link", { email: "daily@example.com" }, { headers: { "X-Forwarded-For": `10.9.0.${i}` } });
+        h2.advance(31_000);
+      }
+      expect(h2.mails).toHaveLength(20);
+    } finally {
+      h2.stop();
     }
-    expect(h.mails).toHaveLength(10);
   });
 
   test("per IP: 429 after 10 magic links in 15 min", async () => {

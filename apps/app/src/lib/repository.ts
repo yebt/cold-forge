@@ -1,4 +1,5 @@
-import { parseAppData, type AppData } from "./model.ts";
+import type { AppData } from "./model.ts";
+import { parseAppData } from "./parse.ts";
 
 /** Minimal async key-value store: Capacitor Preferences on device, memory in tests. */
 export interface KeyValueStore {

@@ -1,8 +1,10 @@
 /**
- * Sync engine. One request = one IMMEDIATE transaction:
+ * Sync engine. Validation (in @cold-forge/sync), cursor decoding and planning (de-duplicating the
+ * batch so each record is written at most once) happen BEFORE the write lock. Then one short
+ * IMMEDIATE transaction:
  *   1. apply incoming records with last-write-wins (`incomingWins`; ties keep the stored record),
  *   2. every write takes the user's next `seq`,
- *   3. enforce per-user storage quotas (rolls everything back if exceeded),
+ *   3. enforce per-user storage quotas, only for tables that gained rows (rolls everything back if exceeded),
  *   4. return everything with `seq > cursor`, paginated (`hasMore`).
  *
  * Every statement filters by `user_id = $user` — the authenticated user — so ids sent by one user
@@ -11,6 +13,7 @@
 import type { Database } from "bun:sqlite";
 import {
   QUOTAS,
+  checkInKey,
   incomingWins,
   SYNC_PROTOCOL_VERSION,
   type SyncArc,
@@ -128,6 +131,19 @@ const toProfile = (r: ProfileRow): SyncProfile => ({
 });
 const stamp = (row: Stamp) => (row ? { updatedAt: row.updated_at } : undefined);
 
+/**
+ * Collapses duplicates in one batch to the record that would win last-write-wins (first one on a
+ * tie), so each record costs at most one write and the result does not depend on batch order.
+ */
+function latestBy<T extends { updatedAt: string }>(records: readonly T[], key: (r: T) => string): T[] {
+  const best = new Map<string, T>();
+  for (const r of records) {
+    const k = key(r);
+    if (incomingWins(best.get(k), r)) best.set(k, r);
+  }
+  return best.size === records.length ? (records as T[]) : [...best.values()];
+}
+
 export class SyncService {
   constructor(
     private readonly db: Database,
@@ -137,24 +153,38 @@ export class SyncService {
   ) {}
 
   sync(userId: string, req: SyncRequest): SyncPage {
+    // Outside the write lock: everything that does not need the database.
+    const cursor = decodeCursor(req.cursor);
+    const arcs = latestBy(req.changes.arcs, (a) => a.id);
+    const habits = latestBy(req.changes.habits, (h) => h.id);
+    const checkIns = latestBy(req.changes.checkIns, checkInKey);
+    const profile = req.changes.profile;
+
     return this.db.transaction((): SyncPage => {
       const user = this.db.query("SELECT seq FROM users WHERE id = ?").get(userId) as { seq: number } | null;
       if (!user) throw new SyncError(401, "unauthorized");
-      const cursor = decodeCursor(req.cursor);
       // A cursor from the future (another account, a restored DB…) is invalid: the client resets to null.
       if (cursor > user.seq) throw new SyncError(400, "invalid_cursor");
 
       let seq = user.seq;
       const next = () => ++seq;
-      this.applyArcs(userId, req.changes.arcs, next);
-      this.applyHabits(userId, req.changes.habits, next);
-      this.applyCheckIns(userId, req.changes.checkIns, next);
-      if (req.changes.profile) this.applyProfile(userId, req.changes.profile, next);
+      const inserted = {
+        arcs: this.applyArcs(userId, arcs, next),
+        habits: this.applyHabits(userId, habits, next),
+        checkIns: this.applyCheckIns(userId, checkIns, next),
+      };
+      if (profile) this.applyProfile(userId, profile, next);
       if (seq !== user.seq) this.db.query("UPDATE users SET seq = ? WHERE id = ?").run(seq, userId);
 
-      this.enforceQuotas(userId);
+      this.enforceQuotas(userId, inserted);
       return this.page(userId, cursor, seq);
     }).immediate();
+  }
+
+  /** Number of records a request submits: the cost charged against the per-user write budget. */
+  static cost(req: SyncRequest): number {
+    const c = req.changes;
+    return c.arcs.length + c.habits.length + c.checkIns.length + (c.profile ? 1 : 0);
   }
 
   /** Everything the user has, tombstones included (data portability). */
@@ -162,7 +192,8 @@ export class SyncService {
     return this.read(userId, 0, Number.MAX_SAFE_INTEGER);
   }
 
-  private applyArcs(userId: string, arcs: readonly SyncArc[], next: () => number): void {
+  /** Returns how many NEW rows were inserted (for quotas). */
+  private applyArcs(userId: string, arcs: readonly SyncArc[], next: () => number): number {
     const get = this.db.query("SELECT updated_at FROM arcs WHERE user_id = ? AND id = ?");
     const put = this.db.query(
       `INSERT INTO arcs (user_id, id, kind, start_date, end_date, why, created_at, updated_at, deleted_at, seq)
@@ -172,8 +203,11 @@ export class SyncService {
          created_at = excluded.created_at, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at,
          seq = excluded.seq`,
     );
+    let inserted = 0;
     for (const a of arcs) {
-      if (!incomingWins(stamp(get.get(userId, a.id) as Stamp), a)) continue;
+      const current = get.get(userId, a.id) as Stamp;
+      if (!incomingWins(stamp(current), a)) continue;
+      if (!current) inserted++;
       put.run({
         user: userId,
         id: a.id,
@@ -187,9 +221,10 @@ export class SyncService {
         seq: next(),
       });
     }
+    return inserted;
   }
 
-  private applyHabits(userId: string, habits: readonly SyncHabit[], next: () => number): void {
+  private applyHabits(userId: string, habits: readonly SyncHabit[], next: () => number): number {
     const get = this.db.query("SELECT updated_at FROM habits WHERE user_id = ? AND id = ?");
     const put = this.db.query(
       `INSERT INTO habits (user_id, id, arc_id, template_id, name, emoji, sort_order, created_at, updated_at, deleted_at, seq)
@@ -199,8 +234,11 @@ export class SyncService {
          sort_order = excluded.sort_order, created_at = excluded.created_at, updated_at = excluded.updated_at,
          deleted_at = excluded.deleted_at, seq = excluded.seq`,
     );
+    let inserted = 0;
     for (const h of habits) {
-      if (!incomingWins(stamp(get.get(userId, h.id) as Stamp), h)) continue;
+      const current = get.get(userId, h.id) as Stamp;
+      if (!incomingWins(stamp(current), h)) continue;
+      if (!current) inserted++;
       put.run({
         user: userId,
         id: h.id,
@@ -215,9 +253,10 @@ export class SyncService {
         seq: next(),
       });
     }
+    return inserted;
   }
 
-  private applyCheckIns(userId: string, checkIns: readonly SyncCheckIn[], next: () => number): void {
+  private applyCheckIns(userId: string, checkIns: readonly SyncCheckIn[], next: () => number): number {
     // Habits were applied first, so habits from this same batch count as owned.
     const owns = this.db.query("SELECT 1 FROM habits WHERE user_id = ? AND id = ?");
     const get = this.db.query("SELECT updated_at FROM check_ins WHERE user_id = ? AND habit_id = ? AND date = ?");
@@ -228,6 +267,7 @@ export class SyncService {
          done = excluded.done, updated_at = excluded.updated_at, seq = excluded.seq`,
     );
     const owned = new Map<string, boolean>();
+    let inserted = 0;
     for (const c of checkIns) {
       let mine = owned.get(c.habitId);
       if (mine === undefined) {
@@ -235,9 +275,12 @@ export class SyncService {
         owned.set(c.habitId, mine);
       }
       if (!mine) continue; // Unknown or foreign habit: ignored, never an error that reveals anything.
-      if (!incomingWins(stamp(get.get(userId, c.habitId, c.date) as Stamp), c)) continue;
+      const current = get.get(userId, c.habitId, c.date) as Stamp;
+      if (!incomingWins(stamp(current), c)) continue;
+      if (!current) inserted++;
       put.run({ user: userId, habit: c.habitId, date: c.date, done: c.done ? 1 : 0, updated: c.updatedAt, seq: next() });
     }
+    return inserted;
   }
 
   private applyProfile(userId: string, p: SyncProfile, next: () => number): void {
@@ -254,12 +297,13 @@ export class SyncService {
       .run({ user: userId, name: p.displayName, locale: p.locale, arc: p.currentArcId, updated: p.updatedAt, seq: next() });
   }
 
-  private enforceQuotas(userId: string): void {
+  /** Counting is only needed for a table that gained rows; updates never change the count. */
+  private enforceQuotas(userId: string, inserted: { arcs: number; habits: number; checkIns: number }): void {
     const count = (sql: string) => (this.db.query(sql).get(userId) as { n: number }).n;
     if (
-      count("SELECT COUNT(*) AS n FROM arcs WHERE user_id = ?") > this.quotas.arcs ||
-      count("SELECT COUNT(*) AS n FROM habits WHERE user_id = ?") > this.quotas.habits ||
-      count("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ?") > this.quotas.checkIns
+      (inserted.arcs > 0 && count("SELECT COUNT(*) AS n FROM arcs WHERE user_id = ?") > this.quotas.arcs) ||
+      (inserted.habits > 0 && count("SELECT COUNT(*) AS n FROM habits WHERE user_id = ?") > this.quotas.habits) ||
+      (inserted.checkIns > 0 && count("SELECT COUNT(*) AS n FROM check_ins WHERE user_id = ?") > this.quotas.checkIns)
     ) {
       // Thrown inside the transaction → every write of this request is rolled back.
       throw new SyncError(422, "quota_exceeded");

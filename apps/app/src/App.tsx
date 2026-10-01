@@ -1,5 +1,5 @@
 import { detectLocale } from "@cold-forge/i18n";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { getTranslations } from "./i18n/index.ts";
 import { dayProgress, derive } from "./lib/derive.ts";
 import { pendingMilestone } from "./lib/milestones.ts";
@@ -14,6 +14,11 @@ import { Share, type ShareTarget } from "./screens/Share.tsx";
 import { Today } from "./screens/Today.tsx";
 import { AppContext, nowISO, todayLocal, type AppState, type Updater } from "./state.tsx";
 import { MilestoneModal } from "./screens/MilestoneModal.tsx";
+import { ConflictModal } from "./screens/ConflictModal.tsx";
+import { bindAppData, startSync, syncEngine } from "./sync/runtime.ts";
+import { useSync } from "./sync/useSync.ts";
+import { LinkConfirmModal } from "./ui/LinkConfirmModal.tsx";
+import { SyncNoticeToast } from "./ui/SyncNoticeToast.tsx";
 import { TabBar, type Tab } from "./ui/TabBar.tsx";
 
 type Phase = { kind: "loading" } | { kind: "onboarding"; carry?: AppData } | { kind: "ready"; data: AppData };
@@ -40,13 +45,34 @@ function useToday() {
 export function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const today = useToday();
+  /** The latest data, updated synchronously on every change (local edits and sync alike). */
+  const dataRef = useRef<AppData | null>(null);
+
+  const setData = useCallback((data: AppData) => {
+    dataRef.current = data;
+    setPhase({ kind: "ready", data });
+  }, []);
 
   useEffect(() => {
     repository
       .load()
-      .then((data) => setPhase(data ? { kind: "ready", data } : { kind: "onboarding" }))
-      .catch(() => setPhase({ kind: "onboarding" }));
-  }, []);
+      .then((data) => {
+        dataRef.current = data;
+        setPhase(data ? { kind: "ready", data } : { kind: "onboarding" });
+      })
+      .catch(() => setPhase({ kind: "onboarding" }))
+      .finally(() => {
+        // Sync starts only after local data is known, so it never mistakes a loading device for an empty one.
+        bindAppData({
+          getData: () => dataRef.current,
+          setData: (data) => {
+            setData(data);
+            void repository.save(data);
+          },
+        });
+        startSync();
+      });
+  }, [setData]);
 
   const locale =
     phase.kind === "ready" ? phase.data.settings.locale : (phase.kind === "onboarding" && phase.carry?.settings.locale) || browserLocale();
@@ -60,9 +86,10 @@ export function App() {
       const carry = phase.kind === "onboarding" ? phase.carry : undefined;
       const data = createAppData({ ...input, ...(carry ? { settings: carry.settings } : {}) }, nowISO());
       void repository.save(data);
-      setPhase({ kind: "ready", data });
+      setData(data);
+      syncEngine.notifyLocalChange();
     },
-    [phase],
+    [phase, setData],
   );
 
   if (phase.kind === "loading") {
@@ -70,6 +97,9 @@ export function App() {
   }
   if (phase.kind === "onboarding") {
     return (
+      <>
+      <SyncNoticeToast locale={locale} />
+      <LinkConfirmModal locale={locale} />
       <Onboarding
         initialLocale={locale}
         initialName={phase.carry?.settings.displayName ?? ""}
@@ -77,48 +107,58 @@ export function App() {
         today={today}
         onDone={finishOnboarding}
       />
+      </>
     );
   }
   return (
     <ReadyApp
       data={phase.data}
+      dataRef={dataRef}
       today={today}
-      setData={(data) => setPhase({ kind: "ready", data })}
-      restart={(carry) => setPhase({ kind: "onboarding", ...(carry ? { carry } : {}) })}
+      setData={setData}
+      restart={(carry) => {
+        dataRef.current = null;
+        setPhase({ kind: "onboarding", ...(carry ? { carry } : {}) });
+      }}
     />
   );
 }
 
 interface ReadyProps {
   data: AppData;
+  dataRef: MutableRefObject<AppData | null>;
   today: string;
   setData: (d: AppData) => void;
   restart: (carry?: AppData) => void;
 }
 
-function ReadyApp({ data, today, setData, restart }: ReadyProps) {
+function ReadyApp({ data, dataRef, today, setData, restart }: ReadyProps) {
   const [tab, setTab] = useState<Tab>("today");
   const [shareTarget, setShareTarget] = useState<ShareTarget>({ kind: "story" });
   const [milestone, setMilestone] = useState<number | null>(null);
   const t = useMemo(() => getTranslations(data.settings.locale), [data.settings.locale]);
   const derived = useMemo(() => derive(data, t.m, today), [data, t, today]);
 
-  // Always apply updates to the latest data, even when several fire before a re-render.
-  const dataRef = useRef(data);
-  dataRef.current = data;
+  const sync = useSync();
+  const [conflictDismissed, setConflictDismissed] = useState(false);
+
+  // Always apply updates to the latest data (including what a sync just brought in), even when
+  // several fire before a re-render.
   const update = useCallback(
     (fn: Updater) => {
-      const next = fn(dataRef.current, nowISO());
-      if (next === dataRef.current) return;
-      dataRef.current = next;
+      const current = dataRef.current ?? data;
+      const next = fn(current, nowISO());
+      if (next === current) return;
       setData(next);
       void repository.save(next);
+      syncEngine.notifyLocalChange();
     },
-    [setData],
+    [setData, dataRef, data],
   );
 
   const reset = useCallback(async () => {
     await repository.clear();
+    await syncEngine.clearHistory();
     await syncReminders([]);
     restart();
   }, [restart]);
@@ -156,7 +196,15 @@ function ReadyApp({ data, today, setData, restart }: ReadyProps) {
     return () => clearTimeout(handle);
   }, [reminderEnabled, reminderTime, today, data.arc.startDate, data.arc.endDate, done, total, stats.perfectStreak, t]);
 
-  const state: AppState = { data, today, t, derived, update, reset };
+  const state: AppState = {
+    data,
+    today,
+    t,
+    derived,
+    update,
+    reset,
+    showConflict: () => setConflictDismissed(false),
+  };
 
   const goShare = (target: ShareTarget) => {
     setShareTarget(target);
@@ -184,6 +232,11 @@ function ReadyApp({ data, today, setData, restart }: ReadyProps) {
           }}
         />
       )}
+      {sync.status === "conflict" && sync.conflict && !conflictDismissed && (
+        <ConflictModal conflict={sync.conflict} onLater={() => setConflictDismissed(true)} />
+      )}
+      <SyncNoticeToast locale={data.settings.locale} />
+      <LinkConfirmModal locale={data.settings.locale} />
     </AppContext.Provider>
   );
 }

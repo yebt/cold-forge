@@ -8,12 +8,12 @@ import {
   isDone,
   markMilestonesCelebrated,
   moveHabit,
-  parseAppData,
   setCheckIn,
   updateHabit,
   updateSettings,
   type AppData,
 } from "./model.ts";
+import { parseAppData } from "./parse.ts";
 
 const T0 = "2026-10-01T08:00:00.000Z";
 const T1 = "2026-10-01T09:00:00.000Z";
@@ -129,7 +129,8 @@ describe("milestones bookkeeping", () => {
 
 describe("parseAppData", () => {
   test("round-trips through JSON", () => {
-    const d = setCheckIn(fixture(), fixture().habits[0]!.id, "2026-10-02", true, T1);
+    const base = fixture();
+    const d = setCheckIn(base, base.habits[0]!.id, "2026-10-02", true, T1);
     expect(parseAppData(JSON.parse(JSON.stringify(d)))).toEqual(d);
   });
 

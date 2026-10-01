@@ -71,13 +71,28 @@ export function renderLoginEmail({ locale, code, link, expiresInMinutes }: Login
   return { subject, text, html };
 }
 
-export function createSmtpMailer(smtp: SmtpConfig, opts: { requireTls: boolean }): Mailer {
-  const transport = nodemailer.createTransport({
+/** Only what we need from a nodemailer transport (injectable so tests can inspect the envelope). */
+export interface MailTransport {
+  sendMail(mail: { from: string; to: string; subject: string; text: string; html: string }): Promise<unknown>;
+}
+
+export function createSmtpMailer(smtp: SmtpConfig, transport: MailTransport = createSmtpTransport(smtp)): Mailer {
+  return {
+    async sendLoginEmail(message) {
+      const { subject, text, html } = renderLoginEmail(message);
+      // `to` is the canonical ASCII address from normalizeEmail: the envelope recipient is exactly it.
+      await transport.sendMail({ from: smtp.from, to: message.to, subject, text, html });
+    },
+  };
+}
+
+export function createSmtpTransport(smtp: SmtpConfig): MailTransport {
+  return nodemailer.createTransport({
     host: smtp.host,
     port: smtp.port,
     secure: smtp.secure,
     // When not using implicit TLS, refuse to send over a connection that cannot upgrade with STARTTLS.
-    requireTLS: !smtp.secure && opts.requireTls,
+    requireTLS: smtp.requireTls,
     auth: smtp.user ? { user: smtp.user, pass: smtp.pass ?? "" } : undefined,
     tls: { minVersion: "TLSv1.2", rejectUnauthorized: true },
     connectionTimeout: 10_000,
@@ -86,20 +101,26 @@ export function createSmtpMailer(smtp: SmtpConfig, opts: { requireTls: boolean }
     disableFileAccess: true,
     disableUrlAccess: true,
   });
-  return {
-    async sendLoginEmail(message) {
-      const { subject, text, html } = renderLoginEmail(message);
-      await transport.sendMail({ from: smtp.from, to: message.to, subject, text, html });
-    },
-  };
+}
+
+/**
+ * The only part of a mail error that is safe to log: nodemailer's error code and the SMTP reply
+ * code. Never the error object or message (they can echo the recipient or server replies).
+ */
+export function mailErrorSummary(e: unknown): string {
+  const err = (e ?? {}) as { code?: unknown; responseCode?: unknown };
+  const code = typeof err.code === "string" && /^[A-Z_]{1,32}$/.test(err.code) ? err.code : "unknown";
+  const response = typeof err.responseCode === "number" ? String(err.responseCode) : "-";
+  return `code=${code} responseCode=${response}`;
 }
 
 /**
  * DEVELOPMENT ONLY: prints the code and link to the console instead of emailing them.
- * Refuses to exist in production so a misconfiguration can never log live credentials.
+ * Refuses to exist outside development so a misconfiguration can never log live credentials
+ * (config additionally requires DEV_CONSOLE_MAILER=1 and a loopback HOST).
  */
 export function createDevConsoleMailer(env: string, log: (line: string) => void = console.log): Mailer {
-  if (env === "production") throw new Error("The console mailer must never be used in production");
+  if (env !== "development") throw new Error("The console mailer is only available in development");
   return {
     async sendLoginEmail({ to, code, link, locale }) {
       log(

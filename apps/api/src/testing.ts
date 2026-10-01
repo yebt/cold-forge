@@ -30,13 +30,13 @@ export interface RequestOpts {
 }
 
 export function startHarness(
-  overrides: Partial<Omit<AppDeps, "db" | "mailer" | "config">> & { env?: Record<string, string> } = {},
+  overrides: Partial<Omit<AppDeps, "db" | "config">> & { env?: Record<string, string> } = {},
 ): Harness {
   const clock = { now: T0 };
   const db = openDatabase(":memory:");
   const mails: LoginEmail[] = [];
   const logs: string[] = [];
-  const mailer: Mailer = {
+  const mailer: Mailer = overrides.mailer ?? {
     async sendLoginEmail(m) {
       mails.push(m);
     },
@@ -46,15 +46,18 @@ export function startHarness(
     AUTH_SECRET: "test-secret-test-secret-test-secret-0123456789",
     APP_URL: APP_ORIGIN,
     CORS_ORIGINS: `${APP_ORIGIN},capacitor://localhost`,
+    // Required by config; the injected fake mailer is what actually "sends".
+    SMTP_HOST: "smtp.test.invalid",
+    MAIL_FROM: "COLD FORGE <login@test.invalid>",
     ...overrides.env,
   });
   const app = createApp({
     db,
-    mailer,
     config,
     clock: () => clock.now,
     log: (m) => logs.push(m),
     ...overrides,
+    mailer,
   });
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...app.serve });
   const url = server.url.href.replace(/\/$/, "");
@@ -84,11 +87,20 @@ export function startHarness(
     request,
     post,
     async login(email) {
+      const sent = mails.length;
       const res = await post("/v1/auth/magic-link", { email, locale: "en" });
       if (res.status !== 202) throw new Error(`magic-link failed: ${res.status}`);
-      const { requestId } = (await res.json()) as { requestId: string };
-      const mail = mails.at(-1)!;
-      const verified = await post("/v1/auth/verify", { requestId, code: mail.code });
+      let requestId: string;
+      let code: string;
+      if (mails.length > sent) {
+        requestId = ((await res.json()) as { requestId: string }).requestId;
+        code = mails.at(-1)!.code;
+      } else {
+        // Silently held back by the per-email cooldown (same email twice in a row). Issue the
+        // login directly instead of moving the clock, so callers' time assertions stay exact.
+        ({ requestId, code } = app.auth.issueLogin(email.trim().toLowerCase()));
+      }
+      const verified = await post("/v1/auth/verify", { requestId, code });
       if (verified.status !== 200) throw new Error(`verify failed: ${verified.status}`);
       return (await verified.json()) as SessionResponse;
     },

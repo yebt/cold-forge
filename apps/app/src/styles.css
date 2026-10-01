@@ -323,7 +323,8 @@ h1.day-big:not(:has(.day-num)) { font-size: 1.6rem; }
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px); transform: translateX(-50%);
   z-index: 60; background: #e6f0ff; color: #04111f; font-weight: 800; padding: 12px 18px; border-radius: 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); max-width: calc(100vw - 32px); text-align: center; animation: toast-in 0.25s ease-out;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); width: max-content; max-width: min(calc(100vw - 32px), 420px);
+  text-align: center; line-height: 1.35; animation: toast-in 0.25s ease-out;
 }
 
 /* ---------- Settings ---------- */
@@ -351,6 +352,43 @@ h1.day-big:not(:has(.day-num)) { font-size: 1.6rem; }
 .he-actions .icon-btn { width: 36px; height: 36px; }
 .group .btn.block + .btn.block { margin-top: 6px; }
 .group p.small { margin-top: 10px; line-height: 1.6; }
+
+/* ---------- Account & sync ---------- */
+.account { gap: 10px; }
+.account .btn.block + .btn.block { margin-top: 0; }
+.group.account p.small { margin-top: 0; line-height: 1.45; }
+.account-pitch { line-height: 1.45; font-weight: 600; }
+.account-form { display: grid; gap: 12px; }
+.account-actions { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.account-actions .btn.primary { flex: 1; }
+.account-step-title { font-size: 1.15rem; font-weight: 900; }
+.account-sent { line-height: 1.5; overflow-wrap: anywhere; }
+.code-input {
+  font-size: 1.6rem; font-weight: 800; letter-spacing: 0.5em; text-align: center; font-variant-numeric: tabular-nums;
+  padding-left: calc(14px + 0.5em);
+}
+.code-input::placeholder { letter-spacing: 0.4em; }
+.account-who { display: grid; gap: 2px; min-width: 0; }
+.account-email { font-size: 1.05rem; overflow-wrap: anywhere; }
+.sync-status { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 600; color: var(--muted); }
+.sync-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.sync-status.ok .dot { background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.6); }
+.sync-status.warn { color: #fdba74; }
+.sync-status.warn .dot { background: var(--ember-soft); }
+.check-row { display: flex; gap: 10px; align-items: center; font-weight: 600; min-height: 44px; }
+.check-row input { width: 22px; height: 22px; min-height: 0; padding: 0; flex: none; accent-color: var(--danger); }
+.stack { display: grid; gap: 8px; }
+.link-email {
+  font-weight: 800; font-size: 1.1rem; padding: 10px 14px; border-radius: 12px; background: var(--bg-2);
+  border: 1px solid var(--border-strong); overflow-wrap: anywhere; text-align: center;
+}
+.stack p { margin: 2px 0; }
+.arc-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.arc-box {
+  display: grid; gap: 4px; padding: 12px 14px; border-radius: 14px; background: var(--bg-2);
+  border: 1px solid var(--border-strong); min-width: 0;
+}
+.arc-box strong { font-size: 1.02rem; }
 
 /* ---------- Tab bar ---------- */
 .tabbar {
