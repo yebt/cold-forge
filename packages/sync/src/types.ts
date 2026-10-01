@@ -65,12 +65,44 @@ export interface SyncRequest {
   changes: SyncChanges;
 }
 
-/** Everything that changed on the server after `cursor` (including what this request just wrote). */
+/**
+ * Everything that changed on the server after `cursor` (including what this request just wrote).
+ * The cursor is opaque. While `hasMore` is true, call again with the returned cursor and empty changes.
+ * A `400 invalid_cursor` means the client should reset its cursor to null and sync again.
+ */
 export interface SyncResponse {
   protocol: typeof SYNC_PROTOCOL_VERSION;
   cursor: string;
   changes: SyncChanges;
+  hasMore: boolean;
   serverTime: string;
+}
+
+/** `GET /v1/export`: every record the server holds for the user, tombstones included. */
+export interface ExportResponse extends SyncChanges {
+  exportedAt: string;
+  user: AuthUser;
+}
+
+export type ApiErrorCode =
+  | "invalid_or_expired"
+  | "invalid_email"
+  | "invalid_request"
+  | "invalid_cursor"
+  | "quota_exceeded"
+  | "rate_limited"
+  | "unauthorized"
+  | "unsupported_media_type"
+  | "payload_too_large"
+  | "origin_not_allowed"
+  | "not_found"
+  | "method_not_allowed"
+  | "internal_error";
+
+/** Every non-2xx response body. `detail` only ever names fields, never echoes values. */
+export interface ApiError {
+  error: ApiErrorCode;
+  detail?: string;
 }
 
 export interface AuthUser {

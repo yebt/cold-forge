@@ -11,6 +11,11 @@
   },
   "dependencies": {
     "@cold-forge/core": "workspace:*",
-    "@cold-forge/i18n": "workspace:*"
+    "@cold-forge/i18n": "workspace:*",
+    "@cold-forge/sync": "workspace:*",
+    "nodemailer": "^10.0.13"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^8.0.2"
   }
 }

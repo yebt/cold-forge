@@ -27,6 +27,13 @@ export const LIMITS = {
   maxClockSkewMs: 5 * 60_000,
 } as const;
 
+/** Per-user storage caps enforced by the server (tombstones count). */
+export const QUOTAS = {
+  arcs: 50,
+  habits: 500,
+  checkIns: 50_000,
+} as const;
+
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
