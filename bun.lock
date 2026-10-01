@@ -14,10 +14,11 @@
       "version": "0.1.0",
       "dependencies": {
         "@cold-forge/core": "workspace:*",
+        "@cold-forge/i18n": "workspace:*",
       },
     },
-    "apps/web": {
-      "name": "@cold-forge/web",
+    "apps/app": {
+      "name": "@cold-forge/app",
       "version": "0.1.0",
       "dependencies": {
         "@cold-forge/core": "workspace:*",
@@ -33,13 +34,32 @@
       "name": "@cold-forge/core",
       "version": "0.1.0",
     },
+    "packages/i18n": {
+      "name": "@cold-forge/i18n",
+      "version": "0.1.0",
+      "dependencies": {
+        "@cold-forge/core": "workspace:*",
+      },
+    },
+    "packages/share-card": {
+      "name": "@cold-forge/share-card",
+      "version": "0.1.0",
+      "dependencies": {
+        "@cold-forge/core": "workspace:*",
+        "@cold-forge/i18n": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@cold-forge/api": ["@cold-forge/api@workspace:apps/api"],
 
+    "@cold-forge/app": ["@cold-forge/app@workspace:apps/app"],
+
     "@cold-forge/core": ["@cold-forge/core@workspace:packages/core"],
 
-    "@cold-forge/web": ["@cold-forge/web@workspace:apps/web"],
+    "@cold-forge/i18n": ["@cold-forge/i18n@workspace:packages/i18n"],
+
+    "@cold-forge/share-card": ["@cold-forge/share-card@workspace:packages/share-card"],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 

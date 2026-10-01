@@ -34,8 +34,12 @@ describe("api", () => {
     const toggledOff = await (await post("/api/check-ins/toggle", { habitId: habit.id, date: "2026-10-05" })).json();
     expect(toggledOff.done).toBe(false);
 
-    const { text } = await (await api("/api/share?today=2026-10-05")).json();
+    const { text } = await (await api("/api/share?today=2026-10-05&locale=es")).json();
     expect(text).toContain("Ducha fría");
+    expect(text).toContain("Racha perfecta");
+
+    const pt = await (await api("/api/share?today=2026-10-05", { headers: { "accept-language": "pt-BR" } })).json();
+    expect(pt.locale).toBe("pt");
   });
 
   test("rejects bad input", async () => {

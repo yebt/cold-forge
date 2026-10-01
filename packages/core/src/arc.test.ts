@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   arcLength,
-  buildShareText,
+  arcWindowFrom,
   computeArcStats,
   currentStreak,
   isISODate,
@@ -82,16 +82,16 @@ describe("computeArcStats", () => {
   });
 });
 
-describe("ranks and sharing", () => {
+describe("ranks and windows", () => {
   test("ranks scale with perfect days", () => {
-    expect(rankFor(0).rank.name).toBe("Mineral crudo");
-    expect(rankFor(21).rank.name).toBe("Acero");
+    expect(rankFor(0).rank.id).toBe("ore");
+    expect(rankFor(21).rank.id).toBe("steel");
     expect(rankFor(200).nextRank).toBeNull();
   });
 
-  test("share text includes the key numbers", () => {
-    const text = buildShareText(computeArcStats(arc, [], "2026-10-10"));
-    expect(text).toContain("Día 10/92");
-    expect(text).toContain("#WinterArc");
+  test("custom arcs last 92 days from the chosen start", () => {
+    const window = arcWindowFrom("2026-10-15");
+    expect(window.endDate).toBe("2027-01-14");
+    expect(arcLength(window)).toBe(92);
   });
 });

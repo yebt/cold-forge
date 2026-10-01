@@ -1,9 +1,20 @@
 import { addDays, diffDays, eachDay, type ISODate } from "./dates.ts";
 import type { Arc, ArcStats, CheckIn, ForgeRank, HabitStats } from "./types.ts";
 
+/** Length of a Winter Arc: October 1st to December 31st. Custom arcs reuse it so late joiners still get the full run. */
+export const ARC_DAYS = 92;
+
+/** Days worth celebrating with their own share card. */
+export const MILESTONE_DAYS = [7, 30, 50, 75, ARC_DAYS] as const;
+
 /** The classic Winter Arc: October 1st to December 31st. */
 export function winterArcWindow(year: number): { startDate: ISODate; endDate: ISODate } {
   return { startDate: `${year}-10-01`, endDate: `${year}-12-31` };
+}
+
+/** A personal arc of `days` days starting on `startDate` ("my 92 days from today"). */
+export function arcWindowFrom(startDate: ISODate, days: number = ARC_DAYS): { startDate: ISODate; endDate: ISODate } {
+  return { startDate, endDate: addDays(startDate, days - 1) };
 }
 
 export function arcLength(arc: Pick<Arc, "startDate" | "endDate">): number {
@@ -11,12 +22,12 @@ export function arcLength(arc: Pick<Arc, "startDate" | "endDate">): number {
 }
 
 export const FORGE_RANKS: readonly ForgeRank[] = [
-  { name: "Mineral crudo", emoji: "🪨", minPerfectDays: 0 },
-  { name: "Hierro", emoji: "⛓️", minPerfectDays: 7 },
-  { name: "Acero", emoji: "🗡️", minPerfectDays: 21 },
-  { name: "Acero templado", emoji: "⚔️", minPerfectDays: 45 },
-  { name: "Damasco", emoji: "🛡️", minPerfectDays: 70 },
-  { name: "Forjado en hielo", emoji: "🧊", minPerfectDays: 90 },
+  { id: "ore", emoji: "🪨", minPerfectDays: 0 },
+  { id: "iron", emoji: "⛓️", minPerfectDays: 7 },
+  { id: "steel", emoji: "🗡️", minPerfectDays: 21 },
+  { id: "tempered", emoji: "⚔️", minPerfectDays: 45 },
+  { id: "damascus", emoji: "🛡️", minPerfectDays: 70 },
+  { id: "iceForged", emoji: "🧊", minPerfectDays: 90 },
 ];
 
 export function rankFor(perfectDays: number): { rank: ForgeRank; nextRank: ForgeRank | null } {
@@ -102,3 +113,29 @@ export function computeArcStats(arc: Arc, checkIns: readonly CheckIn[], today: I
     habits,
   };
 }
+
+export type HabitTemplateId =
+  | "coldShower"
+  | "gym"
+  | "read"
+  | "wakeEarly"
+  | "noSugar"
+  | "lessSocial"
+  | "meditate"
+  | "steps"
+  | "water"
+  | "journal";
+
+/** One-tap starter habits. Display names live in `@cold-forge/i18n`, keyed by `id`. */
+export const HABIT_TEMPLATES: readonly { id: HabitTemplateId; emoji: string }[] = [
+  { id: "coldShower", emoji: "🧊" },
+  { id: "gym", emoji: "🏋️" },
+  { id: "read", emoji: "📚" },
+  { id: "wakeEarly", emoji: "⏰" },
+  { id: "noSugar", emoji: "🚫" },
+  { id: "lessSocial", emoji: "📵" },
+  { id: "meditate", emoji: "🧘" },
+  { id: "steps", emoji: "🚶" },
+  { id: "water", emoji: "💧" },
+  { id: "journal", emoji: "📓" },
+];

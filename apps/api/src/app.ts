@@ -1,4 +1,5 @@
-import { buildShareText, computeArcStats, isISODate, localToday } from "@cold-forge/core";
+import { computeArcStats, isISODate, localToday } from "@cold-forge/core";
+import { buildShareText, detectLocale, getMessages, isLocale } from "@cold-forge/i18n";
 import type { Store } from "./store.ts";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -81,7 +82,9 @@ export function createRoutes(store: Store, now: () => Date = () => new Date()) {
       if (!today) return badRequest("today must be YYYY-MM-DD");
       const current = arc();
       const stats = computeArcStats(current, store.listCheckIns(current.id), today);
-      return json({ text: buildShareText(stats), stats });
+      const param = new URL(req.url).searchParams.get("locale");
+      const locale = isLocale(param) ? param : detectLocale(req.headers.get("accept-language"));
+      return json({ locale, text: buildShareText(stats, getMessages(locale)), stats });
     },
   };
 }

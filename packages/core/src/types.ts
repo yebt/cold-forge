@@ -28,8 +28,11 @@ export interface HabitStats {
   doneToday: boolean;
 }
 
+export type RankId = "ore" | "iron" | "steel" | "tempered" | "damascus" | "iceForged";
+
+/** Display names live in `@cold-forge/i18n`, keyed by `id`. */
 export interface ForgeRank {
-  name: string;
+  id: RankId;
   emoji: string;
   /** Minimum perfect days needed to reach this rank. */
   minPerfectDays: number;
