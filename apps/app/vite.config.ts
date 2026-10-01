@@ -9,14 +9,6 @@ const DEFAULT_APP_URL = "https://app.coldforge.work";
 
 const THEME = "#070b12";
 
-/** Optional extra API origin for connect-src (legacy self-hosted API). Must be plain http(s). */
-function apiOrigin(raw: string | undefined): string | null {
-  if (!raw) return null;
-  const url = new URL(raw);
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error(`VITE_API_URL must be http(s): ${raw}`);
-  return url.origin;
-}
-
 /** Public URL of the app (OG tags, canonical). Must be https outside localhost. */
 function appUrl(raw: string | undefined): string {
   const url = new URL(raw || DEFAULT_APP_URL);
@@ -54,7 +46,6 @@ const GOOGLE_API_ORIGINS = [
 
 interface CspInput {
   dev: boolean;
-  api: string | null;
   authOrigin: string | null;
   functions: string | null;
 }
@@ -63,9 +54,9 @@ interface CspInput {
  * The single source of the Content-Security-Policy. Used for the <meta> tag in index.html and,
  * with `frame-ancestors` added (meta tags can't carry it), for the `_headers` file on Cloudflare Pages.
  */
-export function cspDirectives({ dev, api, authOrigin, functions }: CspInput): string[] {
+export function cspDirectives({ dev, authOrigin, functions }: CspInput): string[] {
   const auth = authOrigin ? [authOrigin] : [];
-  const extra = [api, functions].filter((o): o is string => !!o);
+  const extra = [functions].filter((o): o is string => !!o);
   // Dev only: Vite HMR websocket and the Firebase emulators on localhost.
   const devConnect = dev ? ["ws:", "wss:", "http://localhost:*", "http://127.0.0.1:*"] : [];
   return [
@@ -90,7 +81,7 @@ export function cspDirectives({ dev, api, authOrigin, functions }: CspInput): st
  * It is the main defence for local data and the Firebase session on the web: no inline or remote
  * scripts besides Google's auth helpers, no eval, and the page can only talk to itself and Firebase.
  * Origins come from the build env (`.env.production`): VITE_FIREBASE_AUTH_DOMAIN,
- * VITE_FIREBASE_PROJECT_ID + VITE_FUNCTIONS_REGION, and the optional VITE_API_URL.
+ * VITE_FIREBASE_PROJECT_ID + VITE_FUNCTIONS_REGION.
  *
  * The dev server needs two relaxations that never reach a build: React Fast Refresh injects an
  * inline module script, and Vite injects CSS through <style> tags and uses a websocket for HMR.
@@ -131,7 +122,6 @@ export default defineConfig(({ mode }) => {
       react(),
       contentSecurityPolicy(
         {
-          api: apiOrigin(env.VITE_API_URL),
           authOrigin: firebaseAuthOrigin(env.VITE_FIREBASE_AUTH_DOMAIN),
           functions: functionsOrigin(env.VITE_FUNCTIONS_REGION, env.VITE_FIREBASE_PROJECT_ID),
         },
@@ -194,12 +184,20 @@ export default defineConfig(({ mode }) => {
         workbox: {
           // App shell: the whole build is precached; the app is offline-first, so it is its own offline fallback.
           globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest,woff2}"],
-          globIgnores: ["og.png", "screenshots/**", "_headers", "_redirects"],
+          // The Firebase SDK chunk is loaded only on sign-in (src/sync/runtime.ts): precaching it
+          // would download Firebase for every guest. Signed-in users get it cached on first use below.
+          globIgnores: ["og.png", "screenshots/**", "_headers", "_redirects", "assets/firebaseBackend-*.js"],
           navigateFallback: "index.html",
           // Firebase auth handler paths (if ever served from this origin) must hit the network.
           navigateFallbackDenylist: [/^\/__\//],
           cleanupOutdatedCaches: true,
           runtimeCaching: [
+            {
+              // Hashed, immutable: cache-first keeps sign-in and sync working offline after first use.
+              urlPattern: ({ url }) => url.origin === self.location.origin && /\/assets\/firebaseBackend-[^/]+\.js$/.test(url.pathname),
+              handler: "CacheFirst",
+              options: { cacheName: "firebase-sdk", expiration: { maxEntries: 4 } },
+            },
             {
               // Never cache Google/Firebase traffic (auth tokens, Firestore streams, gapi scripts).
               urlPattern: ({ url }) =>

@@ -17,7 +17,6 @@ import { MilestoneModal } from "./screens/MilestoneModal.tsx";
 import { ConflictModal } from "./screens/ConflictModal.tsx";
 import { bindAppData, startSync, syncEngine } from "./sync/runtime.ts";
 import { useSync } from "./sync/useSync.ts";
-import { LinkConfirmModal } from "./ui/LinkConfirmModal.tsx";
 import { SyncNoticeToast } from "./ui/SyncNoticeToast.tsx";
 import { TabBar, type Tab } from "./ui/TabBar.tsx";
 
@@ -99,7 +98,6 @@ export function App() {
     return (
       <>
       <SyncNoticeToast locale={locale} />
-      <LinkConfirmModal locale={locale} />
       <Onboarding
         initialLocale={locale}
         initialName={phase.carry?.settings.displayName ?? ""}
@@ -236,7 +234,6 @@ function ReadyApp({ data, dataRef, today, setData, restart }: ReadyProps) {
         <ConflictModal conflict={sync.conflict} onLater={() => setConflictDismissed(true)} />
       )}
       <SyncNoticeToast locale={data.settings.locale} />
-      <LinkConfirmModal locale={data.settings.locale} />
     </AppContext.Provider>
   );
 }

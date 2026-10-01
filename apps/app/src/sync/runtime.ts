@@ -1,10 +1,23 @@
 import { localToday } from "@cold-forge/core";
+import { redirectPending } from "../firebase/config.ts";
 import type { AppData } from "../lib/model.ts";
-import { createApiClient } from "../lib/sync/api.ts";
+import type { SyncBackend } from "../lib/sync/backend.ts";
 import { createSyncEngine } from "../lib/sync/engine.ts";
-import { API_URL } from "../platform/config.ts";
-import { onAuthDeepLink, onResumeOrOnline, takeAuthTokenFromLocation } from "../platform/lifecycle.ts";
+import { onForegroundChange } from "../platform/lifecycle.ts";
 import { syncStorage } from "../platform/syncStorage.ts";
+
+/**
+ * The Firebase SDK is only ever loaded here, through a dynamic import, when the user taps
+ * "Sign in with Google" or a previous session/redirect needs it. Guest mode never fetches it.
+ */
+function loadBackend(): Promise<SyncBackend> {
+  // Must stay a literal `import.meta.env` comparison: Vite inlines it, so the minifier drops the
+  // mock branch (and its chunk) from production builds. Checked in the bundle by the e2e run.
+  if (import.meta.env.VITE_FIREBASE_MOCK === "1") {
+    return import("../firebase/mockBackend.ts").then((m) => m.createMockBackend());
+  }
+  return import("../firebase/firebaseBackend.ts").then((m) => m.createFirebaseBackend());
+}
 
 /**
  * The one sync engine of the app. Module-level (not created in a React effect) so StrictMode
@@ -16,21 +29,13 @@ let binding: { getData: () => AppData | null; setData: (d: AppData) => void } = 
 };
 
 export const syncEngine = createSyncEngine({
-  api: createApiClient({ baseUrl: API_URL }),
+  loadBackend,
   storage: syncStorage,
   getData: () => binding.getData(),
   setData: (d) => binding.setData(d),
   today: () => localToday(),
+  redirectPending,
 });
-
-/** Strip a sign-in token from the URL as early as possible (module load, before rendering). */
-const pendingLink = takeAuthTokenFromLocation();
-
-function handleLink(link: { token: string | null } | null): void {
-  if (!link) return;
-  if (link.token) void syncEngine.signInWithLinkToken(link.token);
-  else syncEngine.reportInvalidLink(); // never sent to the server
-}
 
 export function bindAppData(b: typeof binding): void {
   binding = b;
@@ -42,11 +47,9 @@ let started = false;
 export function startSync(): void {
   if (started) return;
   started = true;
-  void syncEngine.init().then(() => {
-    handleLink(pendingLink);
-  });
-  onResumeOrOnline(() => void syncEngine.requestSync("resume"));
-  onAuthDeepLink((token) => void syncEngine.signInWithLinkToken(token));
-  // The link can also land in a tab where the app is already open.
-  addEventListener("hashchange", () => handleLink(takeAuthTokenFromLocation()));
+  void syncEngine.init();
+  // Realtime listeners only while the app is visible; a sync on every return to the foreground.
+  onForegroundChange((active) => syncEngine.setForeground(active));
+  syncEngine.setForeground(typeof document === "undefined" || document.visibilityState !== "hidden");
+  addEventListener("online", () => void syncEngine.requestSync("online"));
 }

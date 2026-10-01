@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { dayProgress } from "../lib/derive.ts";
 import { activeHabits, isDone, setCheckIn } from "../lib/model.ts";
 import { hapticImpact, hapticSuccess, playClang, playFanfare } from "../platform/feedback.ts";
+import { InstallBanner } from "../pwa/index.ts";
 import { useApp } from "../state.tsx";
 import { ForgeRing } from "../ui/ForgeRing.tsx";
 import { burstFromElement, celebrate } from "../ui/sparks.ts";
@@ -153,6 +154,8 @@ export function Today({ onNewArc }: { onNewArc: () => void }) {
           </div>
         </div>
       )}
+      {/* Dismissible, below the day's work: never in the way of checking in. */}
+      <InstallBanner locale={t.locale} />
     </div>
   );
 }

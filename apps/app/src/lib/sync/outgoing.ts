@@ -22,9 +22,11 @@ export interface Outgoing {
   skipped: number;
 }
 
-type Kind = "arcs" | "habits" | "checkIns" | "profile";
+export type RecordKind = "arcs" | "habits" | "checkIns" | "profile";
+type Kind = RecordKind;
 
-function check<T>(kind: Kind, record: T, now: number): T | null {
+/** The record as the shared validator returns it (canonical timestamps, unknown fields dropped), or null. */
+export function checkRecord<T>(kind: RecordKind, record: T, now: number): T | null {
   const changes: Record<string, unknown> = { arcs: [], habits: [], checkIns: [], profile: null };
   changes[kind] = kind === "profile" ? record : [record];
   const r = parseSyncRequest({ protocol: SYNC_PROTOCOL_VERSION, cursor: null, changes }, now);
@@ -62,27 +64,50 @@ const repairProfile = (p: SyncProfile): SyncProfile => ({
   updatedAt: ts(p.updatedAt),
 });
 
-export function prepareOutgoing(dirty: SyncChanges, now: number): Outgoing {
+/**
+ * Parents the backend already has or that are being sent. Backends that enforce references
+ * (Firestore rules: a habit's arc and a check-in's habit must exist) would reject the whole
+ * atomic write for one orphan, so children of unknown or held-back parents stay pending.
+ */
+export interface KnownParents {
+  arcIds: ReadonlySet<string>;
+  habitIds: ReadonlySet<string>;
+}
+
+export function prepareOutgoing(dirty: SyncChanges, now: number, known?: KnownParents): Outgoing {
   const out = emptyChanges();
   let repaired = 0;
   let skipped = 0;
   const take = <T>(kind: Kind, record: T, repair: (r: T) => T): T | null => {
-    const ok = check(kind, record, now);
+    const ok = checkRecord(kind, record, now);
     if (ok) return ok;
-    const fixed = check(kind, repair(record), now);
+    const fixed = checkRecord(kind, repair(record), now);
     if (fixed) repaired++;
     else skipped++;
     return fixed;
   };
+  const heldArcs = new Set<string>();
+  const heldHabits = new Set<string>();
   for (const a of dirty.arcs) {
     const r = take("arcs", a, repairArc);
     if (r) out.arcs.push(r);
+    else heldArcs.add(a.id);
   }
   for (const h of dirty.habits) {
+    if (known && (!known.arcIds.has(h.arcId) || heldArcs.has(h.arcId))) {
+      skipped++;
+      heldHabits.add(h.id);
+      continue;
+    }
     const r = take("habits", h, repairHabit);
     if (r) out.habits.push(r);
+    else heldHabits.add(h.id);
   }
   for (const c of dirty.checkIns) {
+    if (known && (!known.habitIds.has(c.habitId) || heldHabits.has(c.habitId))) {
+      skipped++;
+      continue;
+    }
     const r = take("checkIns", c, repairCheckIn);
     if (r) out.checkIns.push(r);
   }

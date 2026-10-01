@@ -1,4 +1,4 @@
-import { LIMITS, checkInKey, emptyChanges, type SyncChanges } from "@cold-forge/sync";
+import { checkInKey, emptyChanges, type SyncChanges } from "@cold-forge/sync";
 
 /** Stable key of a record across kinds (arc ids and habit ids live in different namespaces). */
 export const keyOf = {
@@ -43,31 +43,35 @@ export function markAcked(acked: Map<string, string>, changes: SyncChanges): voi
 }
 
 /**
- * Splits a push into requests within the API's per-request limits. Arcs go first, then habits,
- * then check-ins, so parents reach the server before their children.
+ * Splits a push into atomic writes of at most `maxRecords` records. Arcs go first, then habits,
+ * then check-ins, so parents reach the backend before (or with) their children; the profile
+ * rides in the first write.
+ *
+ * `maxParents` caps the distinct parents referenced in one write (a habit's arc, a check-in's
+ * habit): Firestore rules verify each with `existsAfter()`, and a batched write may make at most
+ * 20 such lookups (repeats of the same document count once).
  */
-export function splitBatches(changes: SyncChanges): SyncChanges[] {
+export function splitBatches(changes: SyncChanges, maxRecords: number, maxParents = Infinity): SyncChanges[] {
   const batches: SyncChanges[] = [];
   let cur = emptyChanges();
   cur.profile = changes.profile;
-  const flushIfFull = (full: boolean) => {
-    if (full) {
+  let size = cur.profile ? 1 : 0;
+  let parents = new Set<string>();
+  const add = (parent: string | null, push: () => void) => {
+    const newParent = parent !== null && !parents.has(parent);
+    if (size >= maxRecords || (newParent && parents.size >= maxParents)) {
       batches.push(cur);
       cur = emptyChanges();
+      size = 0;
+      parents = new Set();
     }
+    if (parent !== null) parents.add(parent);
+    push();
+    size++;
   };
-  for (const a of changes.arcs) {
-    flushIfFull(cur.arcs.length >= LIMITS.maxArcsPerRequest);
-    cur.arcs.push(a);
-  }
-  for (const h of changes.habits) {
-    flushIfFull(cur.habits.length >= LIMITS.maxHabitsPerRequest);
-    cur.habits.push(h);
-  }
-  for (const c of changes.checkIns) {
-    flushIfFull(cur.checkIns.length >= LIMITS.maxCheckInsPerRequest);
-    cur.checkIns.push(c);
-  }
+  for (const a of changes.arcs) add(null, () => cur.arcs.push(a));
+  for (const h of changes.habits) add(`a:${h.arcId}`, () => cur.habits.push(h));
+  for (const c of changes.checkIns) add(`h:${c.habitId}`, () => cur.checkIns.push(c));
   if (!isEmpty(cur)) batches.push(cur);
   return batches;
 }

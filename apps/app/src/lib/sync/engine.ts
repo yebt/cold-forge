@@ -1,15 +1,14 @@
 import type { ISODate } from "@cold-forge/core";
-import { emptyChanges, mergeChanges, type SessionResponse, type SyncChanges } from "@cold-forge/sync";
+import { emptyChanges, mergeChanges, type SyncChanges } from "@cold-forge/sync";
 import type { AppData } from "../model.ts";
-import type { ApiClient, ApiError, ApiResult } from "./api.ts";
+import type { AccountInfo, SyncBackend } from "./backend.ts";
 import { decideFirstSync, summarizeServerArc, type ArcSummary } from "./conflict.ts";
-import { linkNeedsConfirmation, type PendingCodeRequest } from "./linkConfirm.ts";
 import { collectDirty, isEmpty, markAcked, splitBatches } from "./dirty.ts";
-import { prepareOutgoing } from "./outgoing.ts";
-import { httpTransport, type SyncTransport } from "./transport.ts";
+import { err, type SyncError, type SyncResult } from "./errors.ts";
 import { applyRemote, localRecords } from "./mapping.ts";
+import { prepareOutgoing } from "./outgoing.ts";
 import { emptySyncState, forgetAccount, parseSyncState, serializeSyncState, type SyncState } from "./state.ts";
-import { parseSession } from "./validate.ts";
+import type { SyncPage, SyncTransport } from "./transport.ts";
 
 export type SyncStatus =
   | "signedOut"
@@ -18,27 +17,25 @@ export type SyncStatus =
   | "offline"
   | "error"
   | "rateLimited"
-  /** The account is over its storage quota: automatic retries stop until the next manual sync. */
-  | "quota"
-  /** The server refused our data (400): sync is paused, no retry loop ("contact support"). */
+  /** The backend refused our data even after a re-pull: paused, no retry loop ("contact support"). */
   | "rejected"
   | "conflict";
-export type SyncNotice = "signedIn" | "linkInvalid" | "linkFailed" | "sessionExpired" | "accountDeleted" | null;
-export type SyncReason = "start" | "resume" | "online" | "signin" | "manual" | "local" | "retry";
+export type SyncNotice = "signedIn" | "sessionExpired" | "accountDeleted" | null;
+export type SyncReason = "start" | "resume" | "online" | "signin" | "manual" | "local" | "retry" | "remote";
 
 export interface SyncSnapshot {
-  /** Session and state have been read from storage. */
+  /** Session flag and state have been read from storage. */
   loaded: boolean;
   account: { email: string } | null;
   status: SyncStatus;
   lastSyncedAt: string | null;
   conflict: { serverArcId: string; server: ArcSummary | null } | null;
   notice: SyncNotice;
-  /** A sign-in link was verified but awaits the user's "yes, it's me" (login-CSRF guard). */
-  pendingLink: { email: string } | null;
+  /** Realtime listeners are attached ("autosync"). */
+  live: boolean;
 }
 
-/** Persistence for the session token and sync bookkeeping (kept apart from AppData). */
+/** Persistence for the signed-in flag and sync bookkeeping (kept apart from AppData). */
 export interface SyncStorage {
   loadSession(): Promise<string | null>;
   saveSession(value: string): Promise<void>;
@@ -53,16 +50,16 @@ export interface Timers {
 }
 
 export interface SyncEngineDeps {
-  /** Account operations (sign-in links, logout, delete). */
-  api: ApiClient;
-  /** Record exchange. Defaults to the HTTP API's /v1/sync. */
-  transport?: SyncTransport;
+  /** Loads the backend on demand (dynamic import): guest mode never calls it. */
+  loadBackend(): Promise<SyncBackend>;
   storage: SyncStorage;
   /** The latest AppData (null while onboarding). */
   getData(): AppData | null;
   /** Persist + render data changed by a sync. Never called for unchanged data. */
   setData(data: AppData): void;
   today(): ISODate;
+  /** A redirect sign-in may be finishing: load the backend at start even without the flag. */
+  redirectPending?: () => boolean;
   now?: () => number;
   timers?: Timers;
   random?: () => number;
@@ -74,43 +71,43 @@ export interface SyncEngine {
   dispose(): void;
   subscribe(listener: () => void): () => void;
   getSnapshot(): SyncSnapshot;
-  readonly api: ApiClient;
-  signIn(session: SessionResponse): Promise<void>;
-  /**
-   * Verifies the token from an emailed link. Unless this app just requested a code for the same
-   * email, the session is held in memory only and `pendingLink` asks the user to confirm.
-   */
-  signInWithLinkToken(token: string): Promise<ApiResult<void>>;
-  confirmLink(): Promise<void>;
-  /** Discards the link's session and revokes it server-side. */
-  cancelLink(): Promise<void>;
-  /** Remember that the user asked for a code for `email` on this device (in memory only). */
-  noteCodeRequested(email: string): void;
+  /** User tapped "Sign in with Google". */
+  signIn(): Promise<SyncResult<void>>;
   signOut(): Promise<void>;
-  deleteAccount(): Promise<ApiResult<void>>;
+  deleteAccount(): Promise<SyncResult<void>>;
   requestSync(reason: SyncReason): Promise<void>;
   /** Call after every local edit: syncs ~3 s after the last one. */
   notifyLocalChange(): void;
+  /** App in the foreground: realtime listeners on; background: off. */
+  setForeground(active: boolean): void;
   resolveConflict(choice: "device" | "account"): Promise<void>;
   /** "Reset arc" also erases the archived arcs on this device. */
   clearHistory(): Promise<void>;
   dismissNotice(): void;
-  /** A sign-in link with a malformed token was opened. */
-  reportInvalidLink(): void;
 }
 
 const MAX_PAGES = 500;
-/** The API allows 20 sync calls/min; stay under it on our own instead of collecting 429s. */
-const SYNC_BUDGET = { calls: 15, windowMs: 60_000 };
 const RESUME_THROTTLE_MS = 15_000;
 const BACKOFF_BASE_MS = 5_000;
 const BACKOFF_MAX_MS = 5 * 60_000;
 
-type Outcome = { ok: true } | { ok: false; error: ApiError } | { ok: "stale" };
+type Outcome = { ok: true } | { ok: false; error: SyncError } | { ok: "stale" };
+
+/** The signed-in flag: who, never a credential (the SDK keeps those). */
+function parseFlag(raw: string | null): AccountInfo | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<AccountInfo>;
+    return typeof v.uid === "string" && v.uid.length <= 128 && typeof v.email === "string" && v.email.length <= 320
+      ? { uid: v.uid, email: v.email }
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
-  const { api, storage } = deps;
-  const transport = deps.transport ?? httpTransport(api);
+  const { storage } = deps;
   const now = deps.now ?? Date.now;
   const timers: Timers = deps.timers ?? {
     set: (fn, ms) => setTimeout(fn, ms),
@@ -119,9 +116,12 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   const random = deps.random ?? Math.random;
   const debounceMs = deps.debounceMs ?? 3_000;
 
-  let session: SessionResponse | null = null;
+  let account: AccountInfo | null = null;
+  let backend: SyncBackend | null = null;
+  let transport: SyncTransport | null = null;
+  let unwatchAuth: (() => void) | null = null;
   let state: SyncState = emptySyncState();
-  /** Bumped on every sign-in/out so a sync in flight never writes into the next account's state. */
+  /** Bumped on every sign-in/out so work in flight never writes into the next account's state. */
   let generation = 0;
   let running: Promise<void> | null = null;
   let rerun: SyncReason | null = null;
@@ -130,14 +130,9 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   let failures = 0;
   let blockedUntil = 0;
   let lastSuccessAt = 0;
-  /** Cursor resets in a row; a server that keeps rejecting cursors must not loop us forever. */
-  let cursorResets = 0;
-  /** Times of recent /v1/sync calls (client-side rate budget). */
-  let syncCalls: number[] = [];
+  let foreground = true;
+  let unsubscribeLive: (() => void) | null = null;
   let disposed = false;
-  let pendingRequest: PendingCodeRequest | null = null;
-  /** Verified via a link, not yet confirmed: never persisted, never used for sync. */
-  let unconfirmed: SessionResponse | null = null;
   const listeners = new Set<() => void>();
 
   let snapshot: SyncSnapshot = {
@@ -147,7 +142,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     lastSyncedAt: null,
     conflict: null,
     notice: null,
-    pendingLink: null,
+    live: false,
   };
 
   function emit(patch: Partial<SyncSnapshot>) {
@@ -162,11 +157,12 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
 
   function baseSnapshot(): Partial<SyncSnapshot> {
     return {
-      account: session ? { email: session.user.email } : null,
+      account: account ? { email: account.email } : null,
       lastSyncedAt: state.lastSyncedAt,
       conflict: conflictView(),
-      ...(session ? {} : { status: "signedOut" as const }),
-      ...(session && state.conflict ? { status: "conflict" as const } : {}),
+      live: unsubscribeLive !== null,
+      ...(account ? {} : { status: "signedOut" as const }),
+      ...(account && state.conflict ? { status: "conflict" as const } : {}),
     };
   }
 
@@ -193,9 +189,34 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     }, ms);
   }
 
+  // ---- Backend ----
+
+  /** Loads the backend (first call does the dynamic import) and watches for lost sessions. */
+  async function ensureBackend(): Promise<SyncBackend> {
+    if (backend) return backend;
+    const b = await deps.loadBackend();
+    if (backend) return backend;
+    backend = b;
+    unwatchAuth = b.onSignedOut(() => {
+      if (account) void dropSession("sessionExpired");
+    });
+    return b;
+  }
+
+  function useAccount(a: AccountInfo) {
+    generation++;
+    account = a;
+    transport = backend ? backend.transport(a.uid) : null;
+    if (state.userId !== a.uid) state = { ...forgetAccount(state), userId: a.uid };
+    failures = 0;
+    blockedUntil = 0;
+  }
+
   async function dropSession(notice: SyncNotice) {
     generation++;
-    session = null;
+    stopLive();
+    account = null;
+    transport = null;
     state = forgetAccount(state);
     failures = 0;
     blockedUntil = 0;
@@ -217,64 +238,115 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     if (r.changed && r.data) deps.setData(r.data);
   }
 
-  /** Local changes that can be sent: validated/repaired; invalid ones stay pending (never block the batch). */
+  /** Local changes that can be sent: validated/repaired, parents known; the rest stays pending. */
   function pushable(warn = false): SyncChanges {
-    const dirty = collectDirty(localRecords(deps.getData(), state.history), state.acked);
+    const all = localRecords(deps.getData(), state.history);
+    const dirty = collectDirty(all, state.acked);
     if (isEmpty(dirty)) return dirty;
-    const out = prepareOutgoing(dirty, now());
+    const out = prepareOutgoing(dirty, now(), {
+      arcIds: new Set(all.arcs.map((a) => a.id)),
+      habitIds: new Set(all.habits.map((h) => h.id)),
+    });
     if (warn && (out.skipped > 0 || out.repaired > 0)) {
       // Counts only: never record contents (they are personal data).
-      console.warn(`[sync] outgoing records: ${out.repaired} repaired, ${out.skipped} held back as invalid`);
+      console.warn(`[sync] outgoing records: ${out.repaired} repaired, ${out.skipped} held back`);
     }
     return out.changes;
   }
 
-  async function budgetedSync(token: string, req: { cursor: string | null; changes: SyncChanges }) {
-    const t = now();
-    syncCalls = syncCalls.filter((c) => t - c < SYNC_BUDGET.windowMs);
-    if (syncCalls.length >= SYNC_BUDGET.calls) {
-      const wait = syncCalls[0]! + SYNC_BUDGET.windowMs - t;
-      return { ok: false as const, error: { kind: "rate_limited" as const, retryAfterMs: Math.max(1_000, wait) } };
-    }
-    syncCalls.push(t);
-    return transport.exchange(token, req);
+  // ---- Realtime ("autosync") ----
+
+  function stopLive() {
+    if (!unsubscribeLive) return;
+    unsubscribeLive();
+    unsubscribeLive = null;
+    emit({ live: false });
+  }
+
+  function startLive() {
+    if (unsubscribeLive || !foreground || !account || !transport?.subscribe || state.cursor === null || state.conflict) return;
+    const t = transport;
+    const gen = generation;
+    unsubscribeLive = t.subscribe!(
+      state.cursor,
+      (page) => {
+        if (gen !== generation) return;
+        // Other devices' changes go through the same merge as a pull.
+        apply(page.changes, { keepEmpty: true });
+        state.cursor = t.maxCursor(state.cursor, page.cursor);
+        state.lastSyncedAt = nowISO();
+        void persistState();
+        emit({ ...baseSnapshot(), status: "idle" });
+        if (!isEmpty(pushable())) notifyLocalChange();
+      },
+      (e) => {
+        if (gen !== generation) return;
+        stopLive();
+        if (!e.ok && e.error.kind === "unauthorized") void dropSession("sessionExpired");
+        else scheduleRetry(BACKOFF_BASE_MS); // re-attaches after the next successful sync
+      },
+    );
+    emit({ live: true });
   }
 
   // ---- One sync run ----
 
-  /** Push local changes in batches and pull everything after the cursor (following `hasMore`). */
-  async function exchange(token: string, gen: number): Promise<Outcome> {
-    const batches = splitBatches(pushable(true));
-    let i = 0;
+  /** Pull every page after the cursor and merge it. */
+  async function pullAll(t: SyncTransport, gen: number, opts: { keepEmpty?: boolean } = { keepEmpty: true }): Promise<Outcome> {
+    let more = true;
     let pages = 0;
-    let more = false;
-    do {
-      const batch = batches[i++] ?? emptyChanges();
-      const res = await budgetedSync(token, { cursor: state.cursor, changes: batch });
+    while (more && pages++ < MAX_PAGES) {
+      const res = await t.pull(state.cursor);
       if (gen !== generation) return { ok: "stale" };
       if (!res.ok) return res;
-      markAcked(state.acked, batch);
-      // Only a first sync brings the account's arc onto an empty device (see firstSync).
-      apply(res.value.changes, { keepEmpty: true });
-      state.cursor = res.value.cursor;
+      apply(res.value.changes, opts);
+      state.cursor = t.maxCursor(state.cursor, res.value.cursor);
       more = res.value.hasMore;
       await persistState();
-    } while ((more || i < batches.length) && ++pages < MAX_PAGES);
+    }
     return { ok: true };
   }
 
+  /** Push local changes in atomic batches. */
+  async function pushAll(t: SyncTransport, gen: number): Promise<Outcome> {
+    for (const batch of splitBatches(pushable(true), t.maxPushRecords, t.maxPushParents)) {
+      const res = await t.push(batch);
+      if (gen !== generation) return { ok: "stale" };
+      if (!res.ok) return res;
+      markAcked(state.acked, batch);
+      await persistState();
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Pull first (so last-write-wins is resolved before writing), then push. A rejected batch
+   * usually means another device won in between: pull, re-merge, retry once.
+   */
+  async function exchange(t: SyncTransport, gen: number): Promise<Outcome> {
+    const pulled = await pullAll(t, gen);
+    if (pulled.ok !== true) return pulled;
+    const pushed = await pushAll(t, gen);
+    if (pushed.ok === false && pushed.error.kind === "rejected") {
+      const again = await pullAll(t, gen);
+      if (again.ok !== true) return again;
+      return pushAll(t, gen);
+    }
+    return pushed;
+  }
+
   /** First sync with an account: pull everything, then decide whether to ask the user. */
-  async function firstSync(token: string, gen: number): Promise<Outcome> {
+  async function firstSync(t: SyncTransport, gen: number): Promise<Outcome> {
     let cursor: string | null = null;
     let staged = emptyChanges();
     let pages = 0;
     let more = true;
     while (more && pages++ < MAX_PAGES) {
-      const res = await budgetedSync(token, { cursor, changes: emptyChanges() });
+      const res: SyncResult<SyncPage> = await t.pull(cursor);
       if (gen !== generation) return { ok: "stale" };
       if (!res.ok) return res;
       staged = mergeChanges(staged, res.value.changes);
-      cursor = res.value.cursor;
+      cursor = t.maxCursor(cursor, res.value.cursor);
       more = res.value.hasMore;
     }
     const data = deps.getData();
@@ -290,41 +362,52 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     apply(staged);
     state.cursor = cursor;
     await persistState();
-    return exchange(token, gen);
+    return pushAll(t, gen);
   }
 
   async function runOnce(reason: SyncReason): Promise<void> {
-    if (!session) return;
-    const token = session.token;
+    if (!account) return;
     const gen = generation;
+
+    if (!transport) {
+      try {
+        await ensureBackend();
+      } catch {
+        // The Firebase chunk couldn't load (offline, not cached yet): try again later.
+        failures++;
+        scheduleRetry(Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1)));
+        emit({ ...baseSnapshot(), status: "offline" });
+        return;
+      }
+      if (gen !== generation || !account) return;
+      transport = backend!.transport(account.uid);
+    }
+    const t = transport;
 
     if (state.conflict) {
       if (deps.getData()) {
         emit({ ...baseSnapshot(), status: "conflict" });
         return;
       }
-      // This device's arc is gone (reset): nothing to choose. The account's arc stays in history
-      // and whatever arc the user forges next becomes current.
+      // This device's arc is gone (reset): nothing to choose.
       state.conflict = null;
       await persistState();
     }
     if (reason === "local" && state.cursor !== null && isEmpty(pushable())) return;
 
     emit({ ...baseSnapshot(), status: "syncing" });
-    const outcome = state.cursor === null ? await firstSync(token, gen) : await exchange(token, gen);
+    const outcome = state.cursor === null ? await firstSync(t, gen) : await exchange(t, gen);
     if (outcome.ok === "stale" || gen !== generation) return;
 
     if (outcome.ok) {
       failures = 0;
-      cursorResets = 0;
       lastSuccessAt = now();
       state.lastSyncedAt = nowISO();
       await persistState();
       emit({ ...baseSnapshot(), status: state.conflict ? "conflict" : "idle" });
+      startLive();
       // Applying the server's data can itself produce something to push (e.g. a profile fix-up).
-      if (!state.conflict && !isEmpty(pushable())) {
-        notifyLocalChange();
-      }
+      if (!state.conflict && !isEmpty(pushable())) notifyLocalChange();
       return;
     }
 
@@ -333,32 +416,14 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
       case "unauthorized":
         await dropSession("sessionExpired");
         return;
-      case "invalid_cursor":
-        // The server forgot our cursor (e.g. restored backup): start over. Clearing the acks
-        // re-sends everything; the server's merge is idempotent.
-        if (cursorResets++ < 2) {
-          state.cursor = null;
-          state.acked.clear();
-          await persistState();
-          rerun = "retry";
-          return;
-        }
-        break;
-      case "quota_exceeded":
-        emit({ ...baseSnapshot(), status: "quota" });
-        return;
-      case "invalid_request":
-      case "bad_request":
-        // Same data, same answer: don't loop. A manual "Sync now" (or the next edit) tries again.
+      case "rejected":
+        // Still refused after a re-pull and one retry: don't loop. "Sync now" or the next edit retries.
         emit({ ...baseSnapshot(), status: "rejected" });
         return;
       case "rate_limited":
         blockedUntil = now() + error.retryAfterMs;
         scheduleRetry(error.retryAfterMs);
         emit({ ...baseSnapshot(), status: "rateLimited" });
-        return;
-      case "insecure":
-        emit({ ...baseSnapshot(), status: "error" });
         return;
     }
     // Network trouble or a server error: exponential backoff with jitter.
@@ -369,8 +434,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   }
 
   async function requestSync(reason: SyncReason): Promise<void> {
-    if (disposed || !session) return;
-    if (now() < blockedUntil) return; // 429: even a manual sync waits for Retry-After.
+    if (disposed || !account) return;
+    if (now() < blockedUntil) return; // even a manual sync waits for the backend's back-off
     if (reason === "resume" && now() - lastSuccessAt < RESUME_THROTTLE_MS) return;
     if (running) {
       // Single flight: remember to go again once the current run ends.
@@ -387,8 +452,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
           next = rerun;
         }
       } catch (e) {
-        console.warn("[sync] unexpected error", e instanceof Error ? e.message : "");
-        emit({ ...baseSnapshot(), status: session ? "error" : "signedOut" });
+        console.warn("[sync] unexpected error", e instanceof Error ? e.name : "");
+        emit({ ...baseSnapshot(), status: account ? "error" : "signedOut" });
       } finally {
         running = null;
       }
@@ -397,24 +462,12 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   }
 
   function notifyLocalChange() {
-    if (disposed || !session || state.conflict) return;
+    if (disposed || !account || state.conflict) return;
     clearTimer("debounce");
     debounceTimer = timers.set(() => {
       debounceTimer = null;
       void requestSync("local");
     }, debounceMs);
-  }
-
-  async function signIn(s: SessionResponse) {
-    generation++;
-    pendingRequest = null;
-    session = s;
-    if (state.userId !== s.user.id) state = { ...forgetAccount(state), userId: s.user.id };
-    failures = 0;
-    blockedUntil = 0;
-    await Promise.all([storage.saveSession(JSON.stringify(s)).catch(() => undefined), persistState()]);
-    emit({ ...baseSnapshot(), status: "idle", notice: null });
-    void requestSync("signin");
   }
 
   async function resolveConflict(choice: "device" | "account") {
@@ -437,33 +490,60 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     void requestSync("manual");
   }
 
-  return {
-    api,
+  async function signedIn(a: AccountInfo, notice: SyncNotice) {
+    useAccount(a);
+    await Promise.all([storage.saveSession(JSON.stringify(a)).catch(() => undefined), persistState()]);
+    emit({ ...baseSnapshot(), status: "idle", notice });
+    void requestSync("signin");
+  }
 
+  return {
     async init() {
-      const [rawSession, rawState] = await Promise.all([
+      const [rawFlag, rawState] = await Promise.all([
         storage.loadSession().catch(() => null),
         storage.loadState().catch(() => null),
       ]);
       state = parseSyncState(rawState);
-      let parsed: SessionResponse | null = null;
-      if (rawSession) {
-        try {
-          const r = parseSession(JSON.parse(rawSession));
-          if (r.ok && Date.parse(r.value.expiresAt) > now()) parsed = r.value;
-        } catch {
-          parsed = null;
-        }
-        if (!parsed) await storage.clearSession().catch(() => undefined);
+      const flag = parseFlag(rawFlag);
+      if (rawFlag && !flag) await storage.clearSession().catch(() => undefined);
+      if (flag) {
+        // Show the account right away (works offline); confirm it with the SDK below.
+        account = flag;
+        if (state.userId !== flag.uid) state = { ...forgetAccount(state), userId: flag.uid };
       }
-      session = parsed;
-      if (session && state.userId !== session.user.id) state = { ...forgetAccount(state), userId: session.user.id };
-      emit({ ...baseSnapshot(), loaded: true, status: session ? (state.conflict ? "conflict" : "idle") : "signedOut" });
-      if (session) void requestSync("start");
+      emit({ ...baseSnapshot(), loaded: true, status: account ? (state.conflict ? "conflict" : "idle") : "signedOut" });
+
+      // Guest mode (no flag, no redirect in flight) never loads the backend.
+      if (!flag && !deps.redirectPending?.()) return;
+      let restored: SyncResult<AccountInfo | null>;
+      try {
+        restored = await (await ensureBackend()).restore();
+      } catch {
+        if (account) void requestSync("start"); // will retry loading with backoff
+        return;
+      }
+      if (!restored.ok) {
+        if (account) void requestSync("start");
+        return;
+      }
+      const user = restored.value;
+      if (!user) {
+        if (account) await dropSession("sessionExpired");
+        return;
+      }
+      if (!flag || flag.uid !== user.uid) {
+        await signedIn(user, flag ? null : "signedIn"); // finished a redirect sign-in
+        return;
+      }
+      useAccount(user);
+      emit(baseSnapshot());
+      void requestSync("start");
     },
 
     dispose() {
       disposed = true;
+      stopLive();
+      unwatchAuth?.();
       clearTimer("retry");
       clearTimer("debounce");
       listeners.clear();
@@ -476,66 +556,52 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
 
     getSnapshot: () => snapshot,
 
-    signIn,
-
-    async signInWithLinkToken(token) {
-      const r = await api.verify({ token });
-      if (!r.ok) {
-        emit({ notice: r.error.kind === "network" || r.error.kind === "rate_limited" ? "linkFailed" : "linkInvalid" });
-        return r;
+    async signIn() {
+      let b: SyncBackend;
+      try {
+        b = await ensureBackend();
+      } catch {
+        return err({ kind: "network" });
       }
-      if (linkNeedsConfirmation(r.value.user.email, pendingRequest, now())) {
-        // Replace (and revoke) any earlier unconfirmed link.
-        const previous = unconfirmed;
-        unconfirmed = r.value;
-        if (previous) void api.logout(previous.token).catch(() => undefined);
-        emit({ pendingLink: { email: r.value.user.email } });
-        return { ok: true, value: undefined };
-      }
-      pendingRequest = null;
-      await signIn(r.value);
-      emit({ notice: "signedIn" });
+      const r = await b.signIn();
+      if (!r.ok) return r;
+      await signedIn(r.value, "signedIn");
       return { ok: true, value: undefined };
-    },
-
-    async confirmLink() {
-      const s = unconfirmed;
-      unconfirmed = null;
-      emit({ pendingLink: null });
-      if (!s) return;
-      await signIn(s);
-      emit({ notice: "signedIn" });
-    },
-
-    async cancelLink() {
-      const s = unconfirmed;
-      unconfirmed = null;
-      emit({ pendingLink: null });
-      if (s) void api.logout(s.token).catch(() => undefined);
-    },
-
-    noteCodeRequested(email) {
-      pendingRequest = { email, at: now() };
     },
 
     async signOut() {
-      const token = session?.token;
       await dropSession(null);
-      // Best effort: revoke the token server-side. Local data is kept either way.
-      if (token) void api.logout(token).catch(() => undefined);
+      // Local data stays; the SDK forgets its credentials.
+      if (backend) await backend.signOut().catch(() => undefined);
     },
 
     async deleteAccount() {
-      if (!session) return { ok: false, error: { kind: "unauthorized" } };
-      const r = await api.deleteAccount(session.token);
-      if (!r.ok && r.error.kind !== "unauthorized") return r;
+      if (!account) return err({ kind: "unauthorized" });
+      let b: SyncBackend;
+      try {
+        b = await ensureBackend();
+      } catch {
+        return err({ kind: "network" });
+      }
+      stopLive();
+      const r = await b.deleteAccount();
+      if (!r.ok) {
+        startLive();
+        return r;
+      }
       await dropSession("accountDeleted");
-      return { ok: true, value: undefined };
+      return r;
     },
 
     requestSync,
     notifyLocalChange,
     resolveConflict,
+
+    setForeground(active) {
+      foreground = active;
+      if (!active) stopLive();
+      else if (account) void requestSync("resume").then(() => startLive());
+    },
 
     async clearHistory() {
       state.history = { arcs: [], habits: [], checkIns: [] };
@@ -545,10 +611,6 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
 
     dismissNotice() {
       emit({ notice: null });
-    },
-
-    reportInvalidLink() {
-      emit({ notice: "linkInvalid" });
     },
   };
 }

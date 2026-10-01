@@ -16,8 +16,6 @@ export function SyncNoticeToast({ locale }: { locale: Locale }) {
   const a = UI_MESSAGES[locale].account;
   const text = {
     signedIn: a.noticeSignedIn,
-    linkInvalid: a.noticeLinkInvalid,
-    linkFailed: a.noticeLinkFailed,
     sessionExpired: a.noticeSessionExpired,
     accountDeleted: a.noticeAccountDeleted,
   }[notice];

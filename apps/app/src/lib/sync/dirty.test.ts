@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LIMITS, emptyChanges, type SyncCheckIn } from "@cold-forge/sync";
+import { emptyChanges, type SyncCheckIn } from "@cold-forge/sync";
 import { setCheckIn, updateSettings } from "../model.ts";
 import { decideFirstSync, summarizeServerArc } from "./conflict.ts";
 import { collectDirty, countRecords, isEmpty, markAcked, splitBatches } from "./dirty.ts";
@@ -48,23 +48,34 @@ describe("dirty tracking", () => {
     expect(collectDirty(toSyncChanges(edited), acked).checkIns).toHaveLength(1);
   });
 
-  test("splits pushes within the API limits, arcs and habits first", () => {
+  test("splits pushes into atomic writes, parents first", () => {
     const habitId = uid();
-    const checkIns: SyncCheckIn[] = Array.from({ length: LIMITS.maxCheckInsPerRequest * 2 + 1 }, (_, i) => ({
+    const checkIns: SyncCheckIn[] = Array.from({ length: 900 }, (_, i) => ({
       habitId,
       date: `2026-10-01`,
       done: i % 2 === 0,
       updatedAt: T0,
     }));
     const d = toSyncChanges(makeData());
-    const batches = splitBatches({ ...d, checkIns });
-    expect(batches).toHaveLength(3);
+    const batches = splitBatches({ ...d, checkIns }, 450);
+    expect(batches).toHaveLength(3); // 1 profile + 1 arc + 2 habits + 900 check-ins = 904
     expect(batches[0]!.arcs).toHaveLength(1);
     expect(batches[0]!.habits).toHaveLength(2);
     expect(batches[0]!.profile).not.toBeNull();
-    expect(batches.every((b) => b.checkIns.length <= LIMITS.maxCheckInsPerRequest)).toBe(true);
+    expect(batches.every((b) => b.arcs.length + b.habits.length + b.checkIns.length + (b.profile ? 1 : 0) <= 450)).toBe(true);
     expect(batches.reduce((n, b) => n + b.checkIns.length, 0)).toBe(checkIns.length);
-    expect(splitBatches(emptyChanges())).toEqual([]);
+    expect(splitBatches(emptyChanges(), 450)).toEqual([]);
+  });
+
+  test("caps distinct parents per write (Firestore rules lookup limit)", () => {
+    const checkIns: SyncCheckIn[] = Array.from({ length: 40 }, (_, i) => ({
+      habitId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      date: "2026-10-01",
+      done: true,
+      updatedAt: T0,
+    }));
+    const batches = splitBatches({ ...emptyChanges(), checkIns }, 450, 15);
+    expect(batches.map((b) => new Set(b.checkIns.map((c) => c.habitId)).size)).toEqual([15, 15, 10]);
   });
 });
 

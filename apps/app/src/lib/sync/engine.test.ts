@@ -1,90 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import {
-  checkInKey as syncKey,
-  emptyChanges,
-  incomingWins,
-  type SessionResponse,
-  type SyncChanges,
-  type SyncRequest,
-} from "@cold-forge/sync";
 import { setCheckIn, updateSettings, type AppData } from "../model.ts";
-import type { ApiClient, ApiError, ApiResult } from "./api.ts";
+import type { AccountInfo, SyncBackend } from "./backend.ts";
 import { createSyncEngine, type SyncStorage, type Timers } from "./engine.ts";
+import { err, ok } from "./errors.ts";
+import { checkInDocId, createFirestoreTransport } from "./firestoreTransport.ts";
 import { toSyncChanges } from "./mapping.ts";
-import type { SyncPage } from "./validate.ts";
+import { createMemoryFirestore, type MemoryFirestore } from "./memoryFirestore.ts";
 import { T1, T2, TODAY, makeData } from "./testkit.ts";
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
-
-/** Minimal LWW server with a seq-based cursor and paging, like the real API. */
-function fakeServer(pageSize = 1000) {
-  let seq = 0;
-  type Row<T> = { r: T; seq: number };
-  const arcs = new Map<string, Row<SyncChanges["arcs"][number]>>();
-  const habits = new Map<string, Row<SyncChanges["habits"][number]>>();
-  const checkIns = new Map<string, Row<SyncChanges["checkIns"][number]>>();
-  let profile: Row<NonNullable<SyncChanges["profile"]>> | null = null;
-  const requests: SyncRequest[] = [];
-  let failNext: ApiError[] = [];
-  let inFlight = 0;
-  let maxInFlight = 0;
-
-  function put<T extends { updatedAt: string }>(map: Map<string, Row<T>>, key: string, r: T) {
-    if (incomingWins(map.get(key)?.r, r)) map.set(key, { r, seq: ++seq });
-  }
-
-  const snapshot = (): SyncChanges => ({
-    arcs: [...arcs.values()].map((x) => x.r),
-    habits: [...habits.values()].map((x) => x.r),
-    checkIns: [...checkIns.values()].map((x) => x.r),
-    profile: profile?.r ?? null,
-  });
-
-  async function sync(_token: string, req: SyncRequest): Promise<ApiResult<SyncPage>> {
-    inFlight++;
-    maxInFlight = Math.max(maxInFlight, inFlight);
-    await new Promise((r) => setTimeout(r, 1));
-    inFlight--;
-    requests.push(structuredClone(req));
-    const err = failNext.shift();
-    if (err) return { ok: false, error: err };
-    for (const a of req.changes.arcs) put(arcs, a.id, a);
-    for (const h of req.changes.habits) put(habits, h.id, h);
-    for (const c of req.changes.checkIns) put(checkIns, syncKey(c), c);
-    if (req.changes.profile && incomingWins(profile?.r, req.changes.profile)) profile = { r: req.changes.profile, seq: ++seq };
-    const after = req.cursor ? Number(req.cursor) : 0;
-    type Item = { seq: number; add: (c: SyncChanges) => void };
-    const items: Item[] = [
-      ...[...arcs.values()].map((x) => ({ seq: x.seq, add: (c: SyncChanges) => void c.arcs.push(x.r) })),
-      ...[...habits.values()].map((x) => ({ seq: x.seq, add: (c: SyncChanges) => void c.habits.push(x.r) })),
-      ...[...checkIns.values()].map((x) => ({ seq: x.seq, add: (c: SyncChanges) => void c.checkIns.push(x.r) })),
-      ...(profile ? [{ seq: profile.seq, add: (c: SyncChanges) => void (c.profile = profile!.r) }] : []),
-    ]
-      .filter((i) => i.seq > after)
-      .sort((a, b) => a.seq - b.seq);
-    const pageItems = items.slice(0, pageSize);
-    const changes = emptyChanges();
-    pageItems.forEach((i) => i.add(changes));
-    const cursor = String(pageItems.length ? pageItems[pageItems.length - 1]!.seq : Math.max(after, seq));
-    return {
-      ok: true,
-      value: { cursor, changes, serverTime: new Date(NOW).toISOString(), hasMore: items.length > pageItems.length },
-    };
-  }
-
-  return {
-    sync,
-    snapshot,
-    requests,
-    fail: (...e: ApiError[]) => (failNext = e),
-    get maxInFlight() {
-      return maxInFlight;
-    },
-    seed(c: SyncChanges) {
-      return sync("t", { protocol: 1, cursor: null, changes: c });
-    },
-  };
-}
+const USER: AccountInfo = { uid: "u1", email: "yahir@gmail.com" };
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
 function fakeTimers() {
   const pending = new Map<number, { fn: () => void; ms: number }>();
@@ -103,7 +29,7 @@ function fakeTimers() {
       const list = [...pending.values()];
       pending.clear();
       for (const t of list) t.fn();
-      await new Promise((r) => setTimeout(r, 20));
+      await tick(20);
     },
   };
 }
@@ -121,31 +47,46 @@ function memoryStorage(): SyncStorage & { session: string | null; state: string 
   return s;
 }
 
-const SESSION: SessionResponse = {
-  token: "tok_" + "x".repeat(40),
-  expiresAt: "2026-12-01T00:00:00.000Z",
-  user: { id: "usr_1", email: "yahir@example.com" },
-};
+interface SetupOptions {
+  data?: AppData | null;
+  fs?: MemoryFirestore;
+  live?: boolean;
+  pageSize?: number;
+  /** What the SDK reports at restore (default: whoever signed in). */
+  sdkUser?: AccountInfo | null;
+  loadFails?: boolean;
+  /** The user closes Google's re-auth popup. */
+  deleteCancelled?: boolean;
+}
 
-function setup(opts: { data?: AppData | null; server?: ReturnType<typeof fakeServer>; deleteResult?: ApiResult<void> } = {}) {
-  const server = opts.server ?? fakeServer();
+function setup(opts: SetupOptions = {}) {
+  const fs = opts.fs ?? createMemoryFirestore({ enforceRules: true });
   let data: AppData | null = opts.data === undefined ? makeData() : opts.data;
   const t = fakeTimers();
   const storage = memoryStorage();
-  const logouts: string[] = [];
-  const api: ApiClient = {
-    baseUrl: "https://x.dev",
-    requestMagicLink: async () => ({ ok: true, value: { requestId: "x" } }),
-    verify: async () => ({ ok: true, value: SESSION }),
-    logout: async (token) => {
-      logouts.push(token);
-      return { ok: true, value: undefined };
+  let sdkUser: AccountInfo | null = opts.sdkUser === undefined ? null : opts.sdkUser;
+  const signedOut = new Set<() => void>();
+  let loads = 0;
+  const backend: SyncBackend = {
+    restore: async () => ok(sdkUser),
+    signIn: async () => ok((sdkUser = USER)),
+    signOut: async () => void (sdkUser = null),
+    deleteAccount: async () =>
+      opts.deleteCancelled
+        ? err({ kind: "cancelled" })
+        : (backend.transport(USER.uid) as ReturnType<typeof createFirestoreTransport>).deleteEverything(),
+    onSignedOut: (cb) => {
+      signedOut.add(cb);
+      return () => signedOut.delete(cb);
     },
-    deleteAccount: async () => opts.deleteResult ?? { ok: true, value: undefined },
-    sync: server.sync,
+    transport: (uid) => createFirestoreTransport(fs.port, uid, { now: () => NOW, pageSize: opts.pageSize ?? 300 }),
   };
   const engine = createSyncEngine({
-    api,
+    loadBackend: async () => {
+      loads++;
+      if (opts.loadFails) throw new Error("chunk failed");
+      return backend;
+    },
     storage,
     getData: () => data,
     setData: (d) => void (data = d),
@@ -154,12 +95,16 @@ function setup(opts: { data?: AppData | null; server?: ReturnType<typeof fakeSer
     timers: t.timers,
     random: () => 0.5,
   });
+  if (opts.live === false) engine.setForeground(false);
   return {
     engine,
-    server,
+    fs,
     storage,
-    logouts,
     timers: t,
+    get loads() {
+      return loads;
+    },
+    revoke: () => signedOut.forEach((cb) => cb()),
     get data() {
       return data;
     },
@@ -168,123 +113,124 @@ function setup(opts: { data?: AppData | null; server?: ReturnType<typeof fakeSer
     },
     async signIn() {
       await engine.init();
-      await engine.signIn(SESSION);
+      const r = await engine.signIn();
+      expect(r.ok).toBe(true);
       await engine.requestSync("manual");
+      await tick();
     },
   };
 }
 
-describe("sync engine", () => {
-  test("first sign-in with an empty account pushes everything", async () => {
+const paths = (fs: MemoryFirestore) => [...fs.docs().keys()].sort();
+
+describe("guest mode", () => {
+  test("never loads the backend", async () => {
     const s = setup();
+    await s.engine.init();
+    await s.engine.requestSync("manual");
+    s.engine.notifyLocalChange();
+    s.engine.setForeground(true);
+    expect(s.loads).toBe(0);
+    expect(s.engine.getSnapshot()).toMatchObject({ loaded: true, status: "signedOut", account: null });
+  });
+});
+
+describe("sign-in and first sync", () => {
+  test("an empty account gets everything, in the documented layout", async () => {
+    const s = setup({ live: false });
     await s.signIn();
-    const snap = s.engine.getSnapshot();
-    expect(snap.status).toBe("idle");
-    expect(snap.account).toEqual({ email: "yahir@example.com" });
-    expect(snap.lastSyncedAt).toBe(new Date(NOW).toISOString());
-    const server = s.server.snapshot();
-    expect(server.arcs.map((a) => a.id)).toEqual([s.data!.arc.id]);
-    expect(server.habits).toHaveLength(2);
-    expect(server.profile?.currentArcId).toBe(s.data!.arc.id);
-    expect(JSON.parse(s.storage.session!).token).toBe(SESSION.token);
+    const d = s.data!;
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "idle", account: { email: USER.email }, notice: "signedIn" });
+    expect(paths(s.fs)).toEqual(
+      [
+        "users/u1",
+        `users/u1/arcs/${d.arc.id}`,
+        ...d.habits.map((h) => `users/u1/habits/${h.id}`),
+      ].sort(),
+    );
+    const profile = s.fs.docs().get("users/u1")!;
+    expect(profile).toMatchObject({ displayName: "Yahir", locale: "es", currentArcId: d.arc.id });
+    expect(typeof profile.createdAt).toBe("string");
+    // The flag holds who is signed in, never a credential.
+    expect(JSON.parse(s.storage.session!)).toEqual(USER);
   });
 
-  test("local edits are debounced and only dirty records are pushed", async () => {
-    const s = setup();
-    await s.signIn();
-    const before = s.server.requests.length;
-    s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, "2026-10-05", true, T2);
-    s.engine.notifyLocalChange();
-    s.engine.notifyLocalChange();
+  test("a previous session at startup is restored from the SDK", async () => {
+    const s = setup({ sdkUser: USER, live: false });
+    s.storage.session = JSON.stringify(USER);
+    await s.engine.init();
+    await tick();
+    expect(s.loads).toBe(1);
+    expect(s.engine.getSnapshot()).toMatchObject({ account: { email: USER.email } });
+  });
+
+  test("…and dropped (data kept) if the SDK no longer has it", async () => {
+    const s = setup({ sdkUser: null });
+    s.storage.session = JSON.stringify(USER);
+    await s.engine.init();
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "signedOut", notice: "sessionExpired" });
+    expect(s.storage.session).toBeNull();
+    expect(s.data).not.toBeNull();
+  });
+
+  test("if the SDK chunk can't load (offline), the account stays and it retries", async () => {
+    const s = setup({ loadFails: true });
+    s.storage.session = JSON.stringify(USER);
+    await s.engine.init();
+    await tick();
+    expect(s.engine.getSnapshot()).toMatchObject({ account: { email: USER.email }, status: "offline" });
     expect(s.timers.pending.size).toBe(1);
-    expect([...s.timers.pending.values()][0]!.ms).toBe(3000);
-    await s.timers.runAll();
-    const pushed = s.server.requests.slice(before);
-    expect(pushed).toHaveLength(1);
-    expect(pushed[0]!.changes.checkIns).toHaveLength(1);
-    expect(pushed[0]!.changes.habits).toHaveLength(0);
-    expect(pushed[0]!.changes.profile).toBeNull();
-    // Nothing dirty: a local trigger doesn't hit the network.
-    s.engine.notifyLocalChange();
-    await s.timers.runAll();
-    expect(s.server.requests.length).toBe(before + 1);
   });
 
-  test("a second device without data adopts the account's arc; edits flow both ways", async () => {
-    const server = fakeServer();
-    const a = setup({ server });
+  test("second device without data adopts the account's arc; edits flow both ways", async () => {
+    const fs = createMemoryFirestore({ enforceRules: true });
+    const a = setup({ fs, live: false });
     await a.signIn();
-    const b = setup({ server, data: null });
+    const b = setup({ fs, data: null, live: false });
     await b.signIn();
     expect(b.data?.arc.id).toBe(a.data!.arc.id);
-    expect(b.engine.getSnapshot().status).toBe("idle");
-
-    b.data = setCheckIn(b.data!, b.data!.habits[1]!.id, "2026-10-04", true, T2);
+    const hid = a.data!.habits[1]!.id;
+    b.data = setCheckIn(b.data!, hid, "2026-10-04", true, T2);
     await b.engine.requestSync("manual");
     await a.engine.requestSync("manual");
-    expect(a.data!.checkIns[`${a.data!.habits[1]!.id}|2026-10-04`]?.done).toBe(true);
+    expect(a.data!.checkIns[`${hid}|2026-10-04`]?.done).toBe(true);
+    // Un-check flows back.
+    a.data = setCheckIn(a.data!, hid, "2026-10-04", false, "2026-10-05T10:00:00.000Z");
+    await a.engine.requestSync("manual");
+    await b.engine.requestSync("manual");
+    expect(b.data!.checkIns[`${hid}|2026-10-04`]?.done).toBe(false);
   });
 
-  test("paginates with hasMore until done", async () => {
-    const server = fakeServer(2);
-    const a = setup({ server });
+  test("paginates with small pages", async () => {
+    const fs = createMemoryFirestore({ enforceRules: true });
+    const a = setup({ fs, live: false, data: makeData({ habits: 7 }) });
     await a.signIn();
-    const b = setup({ server, data: null });
+    const b = setup({ fs, live: false, data: null, pageSize: 2 });
     await b.signIn();
-    expect(b.data?.habits).toHaveLength(2);
-    // Every pull after the first page carries the newest cursor.
-    const cursors = server.requests.slice(-4).map((r) => r.cursor);
-    expect(new Set(cursors).size).toBeGreaterThan(1);
+    expect(b.data?.habits).toHaveLength(7);
   });
+});
 
-  test("first sign-in with a different arc on the account asks, then keeps this device's arc", async () => {
-    const server = fakeServer();
-    const remote = setCheckIn(makeData({ name: "Remote" }), makeData().habits[0]!.id, "2026-10-01", true, T1);
-    await server.seed(toSyncChanges(remote));
-    const s = setup({ server });
+describe("conflict on first sign-in", () => {
+  async function seeded() {
+    const fs = createMemoryFirestore({ enforceRules: true });
+    const remote = setup({ fs, live: false, data: makeData({ name: "Remote" }) });
+    await remote.signIn();
+    const s = setup({ fs, live: false });
     const local = s.data!;
     await s.signIn();
-    const snap = s.engine.getSnapshot();
-    expect(snap.status).toBe("conflict");
-    expect(snap.conflict?.serverArcId).toBe(remote.arc.id);
-    expect(snap.conflict?.server).toMatchObject({ habits: 2, startDate: "2026-10-01" });
-    expect(s.data).toBe(local); // nothing changed yet
-    // No pushes while undecided.
-    expect(server.requests.every((r) => r.changes.arcs.length === 0 || r.changes.arcs[0]!.id === remote.arc.id)).toBe(true);
+    return { fs, s, local, remote: remote.data! };
+  }
 
-    await s.engine.resolveConflict("device");
-    await s.engine.requestSync("manual");
-    expect(s.engine.getSnapshot().status).toBe("idle");
-    expect(s.data!.arc.id).toBe(local.arc.id);
-    const after = server.snapshot();
-    expect(after.profile?.currentArcId).toBe(local.arc.id);
-    expect(after.arcs.map((a) => a.id).sort()).toEqual([local.arc.id, remote.arc.id].sort());
-  });
-
-  test("…or switches to the account's arc and keeps this device's arc as history", async () => {
-    const server = fakeServer();
-    const remote = makeData({ name: "Remote" });
-    await server.seed(toSyncChanges(remote));
-    const s = setup({ server });
-    const local = s.data!;
-    await s.signIn();
-    await s.engine.resolveConflict("account");
-    await s.engine.requestSync("manual");
-    expect(s.data!.arc.id).toBe(remote.arc.id);
-    expect(s.data!.settings.displayName).toBe("Remote");
-    expect(s.engine.getSnapshot().status).toBe("idle");
-    // The device's arc was uploaded too, so nothing is lost.
-    expect(server.snapshot().arcs.map((a) => a.id)).toContain(local.arc.id);
-    expect(server.snapshot().profile?.currentArcId).toBe(remote.arc.id);
-  });
-
-  test("the conflict survives a restart", async () => {
-    const server = fakeServer();
-    await server.seed(toSyncChanges(makeData()));
-    const s = setup({ server });
-    await s.signIn();
+  test("asks, pushes nothing, and survives a restart", async () => {
+    const { fs, s, local, remote } = await seeded();
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "conflict", conflict: { serverArcId: remote.arc.id } });
+    expect(s.data).toBe(local);
+    expect(fs.docs().has(`users/u1/arcs/${local.arc.id}`)).toBe(false);
     const again = createSyncEngine({
-      api: { ...s.engine.api },
+      loadBackend: async () => {
+        throw new Error("not needed");
+      },
       storage: s.storage,
       getData: () => s.data,
       setData: () => undefined,
@@ -296,251 +242,226 @@ describe("sync engine", () => {
     expect(again.getSnapshot().status).toBe("conflict");
   });
 
-  test("401 signs out but keeps local data", async () => {
-    const s = setup();
-    await s.signIn();
-    const data = s.data;
-    s.server.fail({ kind: "unauthorized" });
-    await s.engine.requestSync("manual");
-    const snap = s.engine.getSnapshot();
-    expect(snap.status).toBe("signedOut");
-    expect(snap.notice).toBe("sessionExpired");
-    expect(snap.account).toBeNull();
-    expect(s.storage.session).toBeNull();
-    expect(s.data).toBe(data);
+  test("keep this device's arc", async () => {
+    const { fs, s, local, remote } = await seeded();
+    await s.engine.resolveConflict("device");
+    await tick();
+    expect(s.data!.arc.id).toBe(local.arc.id);
+    expect(fs.docs().get("users/u1")!.currentArcId).toBe(local.arc.id);
+    expect(fs.docs().has(`users/u1/arcs/${remote.arc.id}`)).toBe(true);
   });
 
-  test("429 waits for Retry-After, even for manual syncs", async () => {
-    const s = setup();
+  test("use the account's arc (this device's arc is kept and uploaded)", async () => {
+    const { fs, s, local, remote } = await seeded();
+    await s.engine.resolveConflict("account");
+    await tick();
+    expect(s.data!.arc.id).toBe(remote.arc.id);
+    expect(s.data!.settings.displayName).toBe("Remote");
+    expect(fs.docs().has(`users/u1/arcs/${local.arc.id}`)).toBe(true);
+    expect(fs.docs().get("users/u1")!.currentArcId).toBe(remote.arc.id);
+  });
+});
+
+describe("pushing", () => {
+  test("local edits are debounced and only dirty records are written", async () => {
+    const s = setup({ live: false });
     await s.signIn();
-    const n = s.server.requests.length;
-    s.server.fail({ kind: "rate_limited", retryAfterMs: 30_000 });
-    await s.engine.requestSync("manual");
-    expect(s.engine.getSnapshot().status).toBe("rateLimited");
-    expect([...s.timers.pending.values()].map((t) => t.ms)).toContain(30_000);
-    await s.engine.requestSync("manual");
-    expect(s.server.requests.length).toBe(n + 1);
+    const writes = s.fs.stats.writes;
+    s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, "2026-10-05", true, T2);
+    s.engine.notifyLocalChange();
+    s.engine.notifyLocalChange();
+    expect([...s.timers.pending.values()].map((p) => p.ms)).toEqual([3000]);
+    await s.timers.runAll();
+    expect(s.fs.stats.writes - writes).toBe(1);
+    expect(s.fs.docs().has(`users/u1/checkIns/${checkInDocId({ habitId: s.data!.habits[0]!.id, date: "2026-10-05" })}`)).toBe(true);
+    // Nothing dirty: a local trigger doesn't touch the backend.
+    const reads = s.fs.stats.reads;
+    s.engine.notifyLocalChange();
+    await s.timers.runAll();
+    expect(s.fs.stats.reads).toBe(reads);
   });
 
-  test("offline: exponential backoff, then recovers", async () => {
-    const s = setup();
+  test("a rejected batch (another device won meanwhile) is re-pulled and retried once", async () => {
+    const s = setup({ live: false });
     await s.signIn();
-    s.server.fail({ kind: "network" }, { kind: "network" });
+    s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, "2026-10-05", true, T2);
+    // pull = 3 collection queries + the profile read; then the commit is refused once.
+    s.fs.failNext(null, null, null, null, "permission-denied");
     await s.engine.requestSync("manual");
-    expect(s.engine.getSnapshot().status).toBe("offline");
-    const first = [...s.timers.pending.values()][0]!.ms;
-    await s.timers.runAll(); // retry fails again
-    const second = [...s.timers.pending.values()][0]!.ms;
-    expect(second).toBe(first * 2);
-    await s.timers.runAll(); // succeeds
     expect(s.engine.getSnapshot().status).toBe("idle");
+    expect(s.fs.docs().has(`users/u1/checkIns/${s.data!.habits[0]!.id}_2026-10-05`)).toBe(true);
   });
 
-  test("single flight: concurrent triggers never overlap", async () => {
-    const s = setup();
-    await s.engine.init();
-    await s.engine.signIn(SESSION);
-    await Promise.all([s.engine.requestSync("manual"), s.engine.requestSync("resume"), s.engine.requestSync("online")]);
-    expect(s.server.maxInFlight).toBe(1);
+  test("still rejected after the retry: paused, no loop", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, "2026-10-05", true, T2);
+    s.fs.port.commit = async () => {
+      throw Object.assign(new Error("denied"), { code: "permission-denied" });
+    };
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot().status).toBe("rejected");
+    expect(s.timers.pending.size).toBe(0);
+  });
+
+  test("a record that can't be sent stays pending and doesn't block the batch", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    const d = s.data!;
+    s.data = setCheckIn(setCheckIn(d, d.habits[0]!.id, "2026-10-04", true, "2030-01-01T00:00:00.000Z"), d.habits[1]!.id, "2026-10-04", true, T2);
+    await s.engine.requestSync("manual");
+    expect(s.fs.docs().has(`users/u1/checkIns/${d.habits[1]!.id}_2026-10-04`)).toBe(true);
+    expect(s.fs.docs().has(`users/u1/checkIns/${d.habits[0]!.id}_2026-10-04`)).toBe(false);
+    expect(s.engine.getSnapshot().status).toBe("idle");
+    expect(s.timers.pending.size).toBe(0);
+  });
+
+  test("an invalid emoji is repaired on the way out", async () => {
+    const s = setup({ live: false });
+    s.data = { ...s.data!, habits: s.data!.habits.map((h, i) => (i === 0 ? { ...h, emoji: "x" } : h)) };
+    await s.signIn();
+    expect(s.fs.docs().get(`users/u1/habits/${s.data!.habits[0]!.id}`)?.emoji).toBe("🔥");
   });
 
   test("a newer profile from another device is applied", async () => {
-    const server = fakeServer();
-    const a = setup({ server });
+    const fs = createMemoryFirestore({ enforceRules: true });
+    const a = setup({ fs, live: false });
     await a.signIn();
-    const b = setup({ server, data: null });
+    const b = setup({ fs, live: false, data: null });
     await b.signIn();
     a.data = updateSettings(a.data!, { displayName: "Renamed" }, T2);
     await a.engine.requestSync("manual");
     await b.engine.requestSync("manual");
     expect(b.data!.settings.displayName).toBe("Renamed");
   });
+});
 
-  test("delete account signs out and keeps local data; failures are reported", async () => {
+describe("errors", () => {
+  test("unavailable: offline + exponential backoff, then recovers", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    s.fs.failNext("unavailable", null, null, null, "unavailable", null, null, null); // one pull = 4 port calls
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot().status).toBe("offline");
+    const first = [...s.timers.pending.values()][0]!.ms;
+    await s.timers.runAll();
+    expect([...s.timers.pending.values()][0]!.ms).toBe(first * 2);
+    await s.timers.runAll();
+    expect(s.engine.getSnapshot().status).toBe("idle");
+  });
+
+  test("resource-exhausted: waits before retrying, even manual syncs", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    s.fs.failNext("resource-exhausted");
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot().status).toBe("rateLimited");
+    const reads = s.fs.stats.reads;
+    await s.engine.requestSync("manual");
+    expect(s.fs.stats.reads).toBe(reads);
+  });
+
+  test("unauthenticated or a revoked session: signed out, data kept", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    s.fs.failNext("unauthenticated");
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "signedOut", notice: "sessionExpired" });
+    expect(s.data).not.toBeNull();
+
+    const r = setup({ live: false });
+    await r.signIn();
+    r.revoke();
+    await tick();
+    expect(r.engine.getSnapshot().status).toBe("signedOut");
+  });
+
+  test("single flight", async () => {
+    const s = setup({ live: false });
+    await s.engine.init();
+    await s.engine.signIn();
+    let inFlight = 0;
+    let max = 0;
+    const pull = s.fs.port.queryAfter;
+    s.fs.port.queryAfter = async (...args) => {
+      max = Math.max(max, ++inFlight);
+      await tick(2);
+      inFlight--;
+      return pull(...args);
+    };
+    await Promise.all([s.engine.requestSync("manual"), s.engine.requestSync("resume"), s.engine.requestSync("online")]);
+    expect(max).toBeLessThanOrEqual(3); // the 3 collections of one pull, never two pulls at once
+  });
+});
+
+describe("realtime", () => {
+  test("another device's change arrives without a manual sync, and detaches in the background", async () => {
+    const fs = createMemoryFirestore({ enforceRules: true });
+    const a = setup({ fs });
+    await a.signIn();
+    expect(a.engine.getSnapshot().live).toBe(true);
+    const b = setup({ fs, live: false, data: null });
+    await b.signIn();
+    const [h0, h1] = a.data!.habits.map((h) => h.id);
+    b.data = setCheckIn(b.data!, h0!, "2026-10-05", true, T2);
+    await b.engine.requestSync("manual");
+    await tick(20);
+    expect(a.data!.checkIns[`${h0}|2026-10-05`]?.done).toBe(true);
+
+    a.engine.setForeground(false);
+    expect(a.engine.getSnapshot().live).toBe(false);
+    b.data = setCheckIn(b.data!, h1!, "2026-10-05", true, T2);
+    await b.engine.requestSync("manual");
+    await tick(20);
+    expect(a.data!.checkIns[`${h1}|2026-10-05`]).toBeUndefined();
+    a.engine.setForeground(true);
+    await tick(30);
+    expect(a.data!.checkIns[`${h1}|2026-10-05`]?.done).toBe(true);
+    expect(a.engine.getSnapshot().live).toBe(true);
+  });
+});
+
+describe("account", () => {
+  test("delete removes every server document; local data stays", async () => {
     const s = setup();
     await s.signIn();
-    const data = s.data;
-    expect((await s.engine.deleteAccount()).ok).toBe(true);
-    expect(s.engine.getSnapshot()).toMatchObject({ status: "signedOut", notice: "accountDeleted" });
-    expect(s.data).toBe(data);
+    expect(paths(s.fs).length).toBeGreaterThan(0);
+    const r = await s.engine.deleteAccount();
+    expect(r.ok).toBe(true);
+    expect(paths(s.fs)).toEqual([]);
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "signedOut", notice: "accountDeleted", live: false });
+    expect(s.data).not.toBeNull();
+  });
 
-    const f = setup({ deleteResult: { ok: false, error: { kind: "network" } } });
-    await f.signIn();
-    expect((await f.engine.deleteAccount()).ok).toBe(false);
-    expect(f.engine.getSnapshot().status).toBe("idle");
+  test("a cancelled re-auth deletes nothing and keeps the session", async () => {
+    const s = setup({ live: false, deleteCancelled: true });
+    await s.signIn();
+    const before = paths(s.fs);
+    expect(await s.engine.deleteAccount()).toEqual({ ok: false, error: { kind: "cancelled" } });
+    expect(paths(s.fs)).toEqual(before);
+    expect(s.engine.getSnapshot().account).toEqual({ email: USER.email });
   });
 
   test("sign out keeps data and forgets the cursor", async () => {
     const s = setup();
     await s.signIn();
     await s.engine.signOut();
-    expect(s.engine.getSnapshot().status).toBe("signedOut");
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "signedOut", live: false });
     expect(JSON.parse(s.storage.state!).cursor).toBeNull();
+    expect(s.storage.session).toBeNull();
     expect(s.data).not.toBeNull();
   });
 
-  test("an expired stored session is dropped at startup", async () => {
-    const s = setup();
-    s.storage.session = JSON.stringify({ ...SESSION, expiresAt: "2026-01-01T00:00:00.000Z" });
-    await s.engine.init();
-    expect(s.engine.getSnapshot().status).toBe("signedOut");
-    expect(s.storage.session).toBeNull();
+  test("after a reset (no local data, already synced) the account's arc is not forced back", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    s.data = null;
+    await s.engine.requestSync("manual");
+    expect(s.data).toBeNull();
   });
 });
 
-describe("sync engine: server-side resets and quotas", () => {
-  test("invalid_cursor starts over from a null cursor", async () => {
-    const s = setup();
-    await s.signIn();
-    const n = s.server.requests.length;
-    s.server.fail({ kind: "invalid_cursor" });
-    await s.engine.requestSync("manual");
-    const after = s.server.requests.slice(n);
-    expect(after[0]!.cursor).not.toBeNull(); // the rejected one
-    expect(after[1]!.cursor).toBeNull(); // first-sync pull
-    // Everything the server still has came back in the pull, so it is acked again, not re-sent.
-    expect(after.slice(1).every((r) => r.changes.arcs.length === 0)).toBe(true);
-    expect(s.engine.getSnapshot().status).toBe("idle");
-  });
-
-  test("quota_exceeded stops automatic retries", async () => {
-    const s = setup();
-    await s.signIn();
-    s.server.fail({ kind: "quota_exceeded" });
-    await s.engine.requestSync("manual");
-    expect(s.engine.getSnapshot().status).toBe("quota");
-    expect(s.timers.pending.size).toBe(0);
-  });
-});
-
-test("after a reset (no local data, already synced) the account's arc is not forced back", async () => {
-  const s = setup();
-  await s.signIn();
-  s.data = null;
-  await s.engine.requestSync("manual");
-  expect(s.data).toBeNull();
-});
-
-describe("sign-in links (login-CSRF guard)", () => {
-  test("a link is held in memory until the user confirms it", async () => {
-    const s = setup();
-    await s.engine.init();
-    await s.engine.signInWithLinkToken("L".repeat(43));
-    expect(s.engine.getSnapshot().pendingLink).toEqual({ email: "yahir@example.com" });
-    expect(s.engine.getSnapshot().account).toBeNull();
-    expect(s.storage.session).toBeNull();
-    expect(s.server.requests).toHaveLength(0); // nothing uploaded
-    await s.engine.confirmLink();
-    await s.engine.requestSync("manual");
-    expect(s.engine.getSnapshot()).toMatchObject({ pendingLink: null, account: { email: "yahir@example.com" }, status: "idle" });
-    expect(s.storage.session).not.toBeNull();
-    expect(s.server.snapshot().arcs).toHaveLength(1);
-  });
-
-  test("cancel revokes the link's session and links nothing", async () => {
-    const s = setup();
-    await s.engine.init();
-    await s.engine.signInWithLinkToken("L".repeat(43));
-    await s.engine.cancelLink();
-    expect(s.engine.getSnapshot()).toMatchObject({ pendingLink: null, account: null, status: "signedOut" });
-    expect(s.logouts).toEqual([SESSION.token]);
-    expect(s.storage.session).toBeNull();
-    expect(s.server.requests).toHaveLength(0);
-  });
-
-  test("no dialog when this app just asked for a code for the same email", async () => {
-    const s = setup();
-    await s.engine.init();
-    s.engine.noteCodeRequested("Yahir@Example.com");
-    await s.engine.signInWithLinkToken("L".repeat(43));
-    expect(s.engine.getSnapshot().pendingLink).toBeNull();
-    expect(s.engine.getSnapshot().account).toEqual({ email: "yahir@example.com" });
-  });
-
-  test("a code requested for another email still asks", async () => {
-    const s = setup();
-    await s.engine.init();
-    s.engine.noteCodeRequested("someone@else.com");
-    await s.engine.signInWithLinkToken("L".repeat(43));
-    expect(s.engine.getSnapshot().pendingLink).toEqual({ email: "yahir@example.com" });
-  });
-});
-
-describe("sync engine: stricter server", () => {
-  test("400 invalid_request pauses sync instead of retry-looping", async () => {
-    const s = setup();
-    await s.signIn();
-    s.server.fail({ kind: "invalid_request" });
-    await s.engine.requestSync("manual");
-    expect(s.engine.getSnapshot().status).toBe("rejected");
-    expect(s.timers.pending.size).toBe(0);
-  });
-
-  test("a record that can't be sent stays pending and doesn't block or loop", async () => {
-    const s = setup();
-    await s.signIn();
-    const d = s.data!;
-    // One edit stamped far in the future (clock way ahead) plus a normal one.
-    s.data = setCheckIn(setCheckIn(d, d.habits[0]!.id, "2026-10-04", true, "2030-01-01T00:00:00.000Z"), d.habits[1]!.id, "2026-10-04", true, T2);
-    const before = s.server.requests.length;
-    await s.engine.requestSync("manual");
-    const pushed = s.server.requests.slice(before).flatMap((r) => r.changes.checkIns);
-    expect(pushed.map((c) => c.habitId)).toEqual([d.habits[1]!.id]);
-    expect(s.engine.getSnapshot().status).toBe("idle");
-    expect(s.timers.pending.size).toBe(0); // no follow-up loop for the held-back record
-  });
-
-  test("an invalid emoji is repaired on the way out", async () => {
-    const s = setup();
-    s.data = { ...s.data!, habits: s.data!.habits.map((h, i) => (i === 0 ? { ...h, emoji: "x" } : h)) };
-    await s.signIn();
-    expect(s.server.snapshot().habits.find((h) => h.id === s.data!.habits[0]!.id)?.emoji).toBe("🔥");
-  });
-
-  test("stays under the API's 20 sync calls per minute on its own", async () => {
-    const s = setup();
-    await s.signIn();
-    for (let i = 0; i < 20; i++) {
-      s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, "2026-10-04", i % 2 === 0, `2026-10-04T10:00:${String(i).padStart(2, "0")}.000Z`);
-      await s.engine.requestSync("manual");
-    }
-    expect(s.server.requests.length).toBeLessThanOrEqual(15);
-    expect(s.engine.getSnapshot().status).toBe("rateLimited");
-  });
-});
-
-test("the engine only needs a SyncTransport for records (backend-swappable)", async () => {
-  const server = fakeServer();
-  const calls: (string | null)[] = [];
-  let data: AppData | null = makeData();
-  const engine = createSyncEngine({
-    api: {
-      baseUrl: "https://x.dev",
-      requestMagicLink: async () => ({ ok: true, value: { requestId: "x" } }),
-      verify: async () => ({ ok: true, value: SESSION }),
-      logout: async () => ({ ok: true, value: undefined }),
-      deleteAccount: async () => ({ ok: true, value: undefined }),
-      sync: async () => {
-        throw new Error("HTTP sync must not be used when a transport is given");
-      },
-    },
-    transport: {
-      exchange: (credential, req) => {
-        calls.push(req.cursor);
-        return server.sync(credential, { protocol: 1, ...req });
-      },
-    },
-    storage: memoryStorage(),
-    getData: () => data,
-    setData: (d) => void (data = d),
-    today: () => TODAY,
-    now: () => NOW,
-    timers: fakeTimers().timers,
-  });
-  await engine.init();
-  await engine.signIn(SESSION);
-  await engine.requestSync("manual");
-  expect(engine.getSnapshot().status).toBe("idle");
-  expect(calls[0]).toBeNull();
-  expect(server.snapshot().arcs).toHaveLength(1);
+test("pushes are validated with the shared rules (fixture sanity)", () => {
+  expect(toSyncChanges(makeData()).habits.length).toBe(2);
+  expect(T1 < T2).toBe(true);
 });

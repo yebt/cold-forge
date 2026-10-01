@@ -93,6 +93,13 @@ button:disabled { cursor: default; }
 .btn.primary.forge { background: linear-gradient(135deg, var(--gold), var(--ember)); color: #1a0a00; box-shadow: 0 8px 30px -8px rgba(249, 115, 22, 0.7); }
 .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border-strong); }
 .btn.ghost { background: transparent; color: var(--muted); }
+.btn.google { background: #fff; color: #1f1f1f; border: 1px solid #dadce0; font-weight: 700; }
+.btn.google:disabled { opacity: 0.55; }
+.google-mark { width: 20px; height: 20px; flex: none; }
+.live-pill {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.4); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+}
 .btn.danger { background: rgba(248, 113, 113, 0.12); color: var(--danger); border: 1px solid rgba(248, 113, 113, 0.35); }
 
 .icon-btn {
@@ -390,7 +397,7 @@ h1.day-big:not(:has(.day-num)) { font-size: 1.6rem; }
 .code-input::placeholder { letter-spacing: 0.4em; }
 .account-who { display: grid; gap: 2px; min-width: 0; }
 .account-email { font-size: 1.05rem; overflow-wrap: anywhere; }
-.sync-status { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; font-weight: 600; color: var(--muted); }
+.sync-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 0.9rem; font-weight: 600; color: var(--muted); min-width: 0; }
 .sync-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
 .sync-status.ok .dot { background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.6); }
 .sync-status.warn { color: #fdba74; }

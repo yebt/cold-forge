@@ -1,25 +1,34 @@
-import { SYNC_PROTOCOL_VERSION, type SyncChanges } from "@cold-forge/sync";
-import type { ApiClient, ApiResult } from "./api.ts";
-import type { SyncPage } from "./validate.ts";
+import type { SyncChanges } from "@cold-forge/sync";
+import type { SyncResult } from "./errors.ts";
 
-/**
- * The only thing the sync engine needs from a backend: one exchange = push `changes` (already
- * validated, within per-request limits), then return one page of everything that changed after
- * `cursor` (including what was just written), with the next cursor and `hasMore`.
- *
- * Merge, dirty tracking, history, conflicts, batching, retries and backoff all stay in the engine,
- * so swapping the HTTP API for another backend (e.g. Firestore: batched writes + a query ordered
- * by a server timestamp) means implementing just this. Errors use the engine's error kinds
- * (`network`, `unauthorized`, `rate_limited`, `invalid_request`, `quota_exceeded`, `invalid_cursor`…).
- */
-export interface SyncTransport {
-  exchange(credential: string, request: { cursor: string | null; changes: SyncChanges }): Promise<ApiResult<SyncPage>>;
+/** One page of server changes after a cursor. */
+export interface SyncPage {
+  /** Opaque, transport-defined; `null` = from the beginning. */
+  cursor: string;
+  changes: SyncChanges;
+  hasMore: boolean;
 }
 
-/** `POST /v1/sync` over the HTTP API client. */
-export function httpTransport(api: Pick<ApiClient, "sync">): SyncTransport {
-  return {
-    exchange: (credential, { cursor, changes }) =>
-      api.sync(credential, { protocol: SYNC_PROTOCOL_VERSION, cursor, changes }),
-  };
+/**
+ * The record channel between the engine and a backend. Merge, dirty tracking, history,
+ * conflicts, batching, retries and backoff all live in the engine, so a backend only implements
+ * this. Records handed to `push` are already validated (same rules as the server) and ordered
+ * parents-first.
+ */
+export interface SyncTransport {
+  /** Max records per `push` (one atomic write). */
+  readonly maxPushRecords: number;
+  /** Max distinct parents (arcs of habits, habits of check-ins) one push may reference. */
+  readonly maxPushParents?: number;
+  /** Everything that changed after `cursor`, one page at a time (follow `hasMore`). */
+  pull(cursor: string | null): Promise<SyncResult<SyncPage>>;
+  /** Writes records atomically. */
+  push(changes: SyncChanges): Promise<SyncResult<void>>;
+  /**
+   * Realtime: calls `onPage` with changes made after `cursor` (by other devices) as they happen.
+   * Optional; returns an unsubscribe function.
+   */
+  subscribe?(cursor: string | null, onPage: (page: SyncPage) => void, onError: (e: SyncResult<never>) => void): () => void;
+  /** The later of two cursors (pages from pulls and realtime can arrive in any order). */
+  maxCursor(a: string | null, b: string): string;
 }

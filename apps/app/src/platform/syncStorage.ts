@@ -2,12 +2,8 @@ import { Preferences } from "@capacitor/preferences";
 import type { SyncStorage } from "../lib/sync/engine.ts";
 
 /**
- * Session token and sync bookkeeping, in keys separate from the app data.
- *
- * Capacitor Preferences is UserDefaults / SharedPreferences on device and localStorage on the
- * web — not encrypted. Before launch, the session should move to a Keychain/Keystore-backed
- * plugin (e.g. capacitor-secure-storage). On the web the strict CSP in index.html is what keeps
- * injected scripts away from it.
+ * The signed-in flag ({ uid, email } — no credentials: the Firebase SDK keeps those in IndexedDB)
+ * and sync bookkeeping, in keys separate from the app data.
  */
 export const SESSION_KEY = "coldforge.session.v1";
 export const SYNC_STATE_KEY = "coldforge.sync.v1";

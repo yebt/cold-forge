@@ -17,6 +17,7 @@ import { EmojiField } from "../ui/EmojiField.tsx";
 import { FieldHint } from "../ui/FieldHint.tsx";
 import { remindersSupported, requestReminderPermission, type ReminderPermission } from "../platform/notifications.ts";
 import { shareFile } from "../platform/share.ts";
+import { InstallAppButton } from "../pwa/index.ts";
 import { useSync } from "../sync/useSync.ts";
 import { useApp } from "../state.tsx";
 import { AccountSection } from "./AccountSection.tsx";
@@ -252,6 +253,7 @@ export function Settings() {
           ⬇️ {s.export}
         </button>
         <ImportData onDone={setToast} />
+        <InstallAppButton locale={t.locale} />
         <button className="btn danger block" onClick={() => setConfirmReset(true)}>
           {s.reset}
         </button>

@@ -3,15 +3,13 @@ import {
   canonicalTimestamp,
   SYNC_PROTOCOL_VERSION,
   emptyChanges,
-  normalizeEmail,
   parseSyncRequest,
-  type SessionResponse,
   type SyncChanges,
   type SyncProfile,
 } from "@cold-forge/sync";
 
 /**
- * Validation of everything the server (or device storage) hands back. The record rules are the
+ * Validation of everything the backend (or device storage) hands back. The record rules are the
  * shared ones from `@cold-forge/sync` (`parseSyncRequest`), applied in chunks so a server that
  * pages differently than the per-request limits still validates.
  */
@@ -22,11 +20,6 @@ export const MAX_RECORDS = 200_000;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Opaque cursor: printable ASCII, bounded. */
-const CURSOR = /^[\x21-\x7e]{1,512}$/;
-/** Bearer tokens must be header-safe (no CR/LF/space), bounded. */
-const TOKEN = /^[A-Za-z0-9._~+/=-]{16,1024}$/;
-const USER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /** A real ISO UTC timestamp (0–3 fractional digits, round-trips). */
 export function isTimestamp(v: unknown): v is string {
@@ -75,46 +68,4 @@ export function parseChanges(raw: unknown, now: number): Result<SyncChanges> {
 export function parseProfile(raw: unknown, now: number): SyncProfile | null {
   const r = parseChanges({ profile: raw }, now);
   return r.ok ? r.value.profile : null;
-}
-
-export interface SyncPage {
-  cursor: string;
-  changes: SyncChanges;
-  serverTime: string;
-  hasMore: boolean;
-}
-
-export function parseSyncPage(raw: unknown, localNow = Date.now()): Result<SyncPage> {
-  if (!isObj(raw)) return { ok: false, error: "body: must be an object" };
-  if (raw.protocol !== SYNC_PROTOCOL_VERSION) return { ok: false, error: "protocol: unsupported" };
-  if (typeof raw.cursor !== "string" || !CURSOR.test(raw.cursor)) return { ok: false, error: "cursor: invalid" };
-  if (!isTimestamp(raw.serverTime)) return { ok: false, error: "serverTime: invalid" };
-  if (raw.hasMore !== undefined && typeof raw.hasMore !== "boolean") return { ok: false, error: "hasMore: invalid" };
-  // Records may be up to the server's clock (+ the shared skew allowance), even if ours is behind.
-  const now = Math.max(localNow, Date.parse(raw.serverTime));
-  const changes = parseChanges(raw.changes, now);
-  if (!changes.ok) return changes;
-  return {
-    ok: true,
-    value: { cursor: raw.cursor, changes: changes.value, serverTime: raw.serverTime, hasMore: raw.hasMore === true },
-  };
-}
-
-export function isSafeToken(v: unknown): v is string {
-  return typeof v === "string" && TOKEN.test(v);
-}
-
-export function parseSession(raw: unknown): Result<SessionResponse> {
-  if (!isObj(raw) || !isObj(raw.user)) return { ok: false, error: "session: must be an object" };
-  if (!isSafeToken(raw.token)) return { ok: false, error: "session.token: invalid" };
-  if (typeof raw.expiresAt !== "string" || Number.isNaN(Date.parse(raw.expiresAt))) {
-    return { ok: false, error: "session.expiresAt: invalid" };
-  }
-  if (typeof raw.user.id !== "string" || !USER_ID.test(raw.user.id)) return { ok: false, error: "session.user.id: invalid" };
-  const email = normalizeEmail(raw.user.email);
-  if (!email.ok) return { ok: false, error: "session.user.email: invalid" };
-  return {
-    ok: true,
-    value: { token: raw.token, expiresAt: raw.expiresAt, user: { id: raw.user.id, email: email.value } },
-  };
 }
