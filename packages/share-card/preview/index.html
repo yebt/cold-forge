@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Share Card Preview</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; padding: 24px; background: #05080d; color: #e2e8f0; font: 14px/1.4 system-ui, sans-serif; }
+      h1 { font-size: 18px; margin: 0 0 16px; }
+      #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+      figure { margin: 0; }
+      figure img { width: 100%; aspect-ratio: 9 / 16; display: block; border-radius: 12px; background: #111; }
+      figcaption { margin-top: 6px; color: #94a3b8; }
+      .err { color: #f87171; white-space: pre-wrap; }
+      label { display: inline-flex; gap: 6px; align-items: center; margin-bottom: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>COLD FORGE · share cards</h1>
+    <label><input type="checkbox" id="safe" /> show IG safe zone</label>
+    <div id="grid"></div>
+    <script type="module" src="./preview.ts"></script>
+  </body>
+</html>

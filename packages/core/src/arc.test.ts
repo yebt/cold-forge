@@ -80,6 +80,16 @@ describe("computeArcStats", () => {
     expect(done.status).toBe("finished");
     expect(done.day).toBe(92);
   });
+
+  test("streaks freeze at the end of a finished arc", () => {
+    const lastDays = ["2026-12-30", "2026-12-31"].flatMap((date) => [
+      { habitId: "gym", date },
+      { habitId: "read", date },
+    ]);
+    const stats = computeArcStats(arc, lastDays, "2027-01-10");
+    expect(stats.perfectStreak).toBe(2);
+    expect(stats.habits[0]?.currentStreak).toBe(2);
+  });
 });
 
 describe("ranks and windows", () => {

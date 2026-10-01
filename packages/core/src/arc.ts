@@ -69,6 +69,8 @@ export function computeArcStats(arc: Arc, checkIns: readonly CheckIn[], today: I
   const status = rawDay < 1 ? "upcoming" : rawDay > totalDays ? "finished" : "active";
   const day = Math.min(Math.max(rawDay, 0), totalDays);
 
+  // Once the arc is over, streaks are frozen as of its last day instead of decaying to 0.
+  const streakDay = status === "finished" ? arc.endDate : today;
   const inArc = (d: ISODate) => d >= arc.startDate && d <= arc.endDate && d <= today;
   const doneByHabit = new Map<string, Set<ISODate>>(arc.habits.map((h) => [h.id, new Set()]));
   for (const c of checkIns) {
@@ -80,7 +82,7 @@ export function computeArcStats(arc: Arc, checkIns: readonly CheckIn[], today: I
     return {
       habit,
       totalDone: done.size,
-      currentStreak: currentStreak(done, today),
+      currentStreak: currentStreak(done, streakDay),
       longestStreak: longestStreak(done),
       doneToday: done.has(today),
     };
@@ -108,7 +110,7 @@ export function computeArcStats(arc: Arc, checkIns: readonly CheckIn[], today: I
     status,
     completionRate: possible === 0 ? 0 : Math.min(totalDone / possible, 1),
     perfectDays: perfect.size,
-    perfectStreak: currentStreak(perfect, today),
+    perfectStreak: currentStreak(perfect, streakDay),
     ...rankFor(perfect.size),
     habits,
   };
