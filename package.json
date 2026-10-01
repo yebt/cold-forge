@@ -1,0 +1,20 @@
+{
+  "name": "cold-forge",
+  "private": true,
+  "description": "COLD FORGE — trackea y presume tu progreso en el Winter Arc.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '@cold-forge/api' --filter '@cold-forge/web' dev",
+    "dev:api": "bun run --filter '@cold-forge/api' dev",
+    "dev:web": "bun run --filter '@cold-forge/web' dev",
+    "test": "bun test",
+    "typecheck": "bun run --filter '*' typecheck"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}
