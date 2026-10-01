@@ -20,7 +20,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "wrangler": "4.145.0"
   },
   "overrides": {
     "@grpc/grpc-js": "^1.14.5",

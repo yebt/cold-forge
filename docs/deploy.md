@@ -15,72 +15,55 @@ Firebase project: `coldforge-work` (auth domain `coldforge-work.firebaseapp.com`
 
 ---
 
-## 1. Cloudflare Pages
+## 1. Cloudflare (Workers static assets)
 
-Create **one Pages project per app** from the same GitHub repo
-(Workers & Pages → Create → Pages → Connect to Git → `yebt/cold-forge`, production branch `main`).
+Each site is a Cloudflare **Worker with static assets only** (no server code), configured by a committed
+`wrangler.jsonc` next to it. Workers static assets honour the same `_headers` file Pages used, and the
+`routes` entry attaches the custom domain on deploy, so there is no manual "Custom domains" step.
 
-### App (PWA) — project `cold-forge-app`
+| Worker | Config | Serves | Domain |
+| --- | --- | --- | --- |
+| `cold-forge-landing` | `apps/landing/wrangler.jsonc` | `apps/landing/dist` | `coldforge.work` |
+| `cold-forge-app` | `apps/app/wrangler.jsonc` | `apps/app/dist` (SPA fallback) | `app.coldforge.work` |
+| `cold-forge-admin` | `apps/admin/wrangler.jsonc` | `apps/admin/dist` (SPA fallback) | `admin.coldforge.work` |
 
-| Setting | Value |
-| --- | --- |
-| Framework preset | None |
-| Root directory | `/` (repo root — it is a Bun workspace) |
-| Build command | `bun install --frozen-lockfile && bun run --filter @cold-forge/app build` |
-| Build output directory | `apps/app/dist` |
-| Environment variables | `BUN_VERSION=1.3.14`, `NODE_VERSION=22` |
+`workers_dev` and `preview_urls` are off: the sites only answer on their real domains (Firebase Auth only
+allows those, and Access protects only `admin.coldforge.work`).
 
-The Firebase web config and URLs come from the committed `apps/app/.env.production`
-(`VITE_FIREBASE_*`, `VITE_FUNCTIONS_REGION`, `VITE_APP_URL`, `VITE_SITE_URL`). They are public by design.
-Only set them as Pages variables to override a value — and never set one to an empty string
-(Vite would use the empty value).
+### Create each Worker (Workers & Pages → Create application → Import a repository → `yebt/cold-forge`)
 
-The production build refuses `VITE_USE_EMULATORS=1` and `VITE_FIREBASE_MOCK=1` (UI tests build the
-mock with `vite build --mode mock`), and the emulator code path is compiled out (`import.meta.env.DEV`).
+| Field | landing | app | admin |
+| --- | --- | --- | --- |
+| Project name | `cold-forge-landing` | `cold-forge-app` | `cold-forge-admin` |
+| Build command | `bun install --frozen-lockfile && bun run --filter @cold-forge/landing build` | `bun install --frozen-lockfile && bun run --filter @cold-forge/app build` | `bun install --frozen-lockfile && bun run --filter @cold-forge/admin build` |
+| Deploy command | `bunx wrangler deploy --config apps/landing/wrangler.jsonc` | `bunx wrangler deploy --config apps/app/wrangler.jsonc` | `bunx wrangler deploy --config apps/admin/wrangler.jsonc` |
+| Preview command | *(leave empty)* | *(leave empty)* | *(leave empty)* |
+| Enable Preview builds | off | off | **off** |
+| Advanced → Path | `/` | `/` | `/` |
+| Advanced → Build variables | `BUN_VERSION=1.3.14`, `NODE_VERSION=22`, `SITE_URL=https://coldforge.work`, `APP_URL=https://app.coldforge.work` | `BUN_VERSION=1.3.14`, `NODE_VERSION=22` | `BUN_VERSION=1.3.14`, `NODE_VERSION=22` |
 
-What the build produces for Cloudflare:
+The project name must match `name` in the `wrangler.jsonc`. The API token Cloudflare offers is fine; a
+warning about `artifacts_*` permissions doesn't matter for these Workers. Every push to `main` rebuilds and
+redeploys all three.
 
-- `_headers` (from `apps/app/public/_headers`): security headers and cache rules. The
-  `Content-Security-Policy` line is filled in at build time by `vite.config.ts` from the same function
-  that writes the `<meta>` CSP in `index.html`, plus `frame-ancestors 'none'`, so the two never drift.
-  Firebase origins in it are derived from `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID` and
-  `VITE_FUNCTIONS_REGION`.
-- Cache: `/assets/*` immutable for a year; `/`, `/index.html`, `/sw.js`, `/workbox-*.js` and
-  `/manifest.webmanifest` are `no-cache` so a new deploy reaches users (the app shows
-  "New version available — Reload").
-- No `_redirects`: the app has no client-side routes (only `#…` hashes), and the service worker serves
-  the app shell for any navigation once installed.
+The Firebase web config comes from the committed `.env.production` files (public by design); only set
+`VITE_*` build variables to override a value, never to an empty string. Production builds refuse
+`VITE_USE_EMULATORS=1` and `VITE_FIREBASE_MOCK=1`.
 
-### Landing — project `cold-forge-landing`
+`_headers` (from each app's `public/`) carries the CSP (generated at build time from the same function as
+the `<meta>` tag), HSTS, `X-Frame-Options: DENY`, etc. Cache: hashed `/assets/*` immutable for a year;
+`/`, `/index.html`, `/sw.js`, `/workbox-*.js` and the manifest `no-cache`, so a deploy reaches users.
 
-| Setting | Value |
-| --- | --- |
-| Root directory | `/` |
-| Build command | `bun install --frozen-lockfile && bun run --filter @cold-forge/landing build` |
-| Build output directory | `apps/landing/dist` |
-| Environment variables | `BUN_VERSION=1.3.14`, `NODE_VERSION=22`, `SITE_URL=https://coldforge.work`, `APP_URL=https://app.coldforge.work` |
-
-Optional: `APK_URL` (defaults to the GitHub "latest release" download link above).
-`apps/landing/public/_headers` sets HSTS, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, etc.
-
-### Admin — project `cold-forge-admin`
-
-Same pattern (`bun run --filter @cold-forge/admin build`, output `apps/admin/dist`); see the admin app's
-own docs. **Recommended, optional:** put `admin.coldforge.work` behind **Cloudflare Zero Trust → Access**
-(application with an allow-list policy for the owner's email). It is defence in depth only: the panel
-works without it, and every admin call is authorized server-side against `ADMIN_ALLOWED_EMAILS`.
+Classic Cloudflare Pages still works too (build output `apps/<name>/dist`, same build command and
+variables, domains added by hand); the `wrangler.jsonc` files are simply ignored there.
 
 ### Custom domains and DNS
 
-1. Add `coldforge.work` to Cloudflare (Websites → Add a site) and switch the registrar's nameservers to
-   the two Cloudflare nameservers shown. The apex domain on Pages requires Cloudflare DNS.
-2. In each Pages project → Custom domains → Set up a domain:
-   - landing → `coldforge.work` (optionally also `www.coldforge.work`, then a Redirect Rule
-     `www.coldforge.work/*` → `https://coldforge.work/${1}`, 301)
-   - app → `app.coldforge.work`
-   - admin → `admin.coldforge.work`
-
-   Cloudflare creates the proxied CNAME records (`app` → `cold-forge-app.pages.dev`, …) itself.
+1. `coldforge.work` must be a zone in the same Cloudflare account (domains bought through Cloudflare
+   already are). Otherwise: Websites → Add a site, and switch the registrar's nameservers to Cloudflare.
+2. Nothing else: each Worker's first deploy creates its custom domain and DNS record from `routes` in its
+   `wrangler.jsonc`. Remove any old DNS record with the same name first, or the deploy refuses to take it
+   over. Optional: a Redirect Rule `www.coldforge.work/*` → `https://coldforge.work/${1}` (301).
 3. SSL/TLS → Edge Certificates: *Always Use HTTPS* on. HSTS is sent by `_headers`
    (`max-age=31536000; includeSubDomains`); only add `preload` once every subdomain is HTTPS-only for good.
 

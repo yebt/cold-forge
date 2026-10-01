@@ -1,0 +1,17 @@
+{
+  // Cloudflare Workers static assets (the "new" Workers & Pages flow). No Worker script: every
+  // request is served from ./dist, and ./dist/_headers (security + cache headers) is honoured.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "cold-forge-landing",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  // Only the real domain serves the site: no *.workers.dev URL and no preview URLs that would
+  // bypass Firebase authorized domains or Cloudflare Access.
+  "workers_dev": false,
+  "preview_urls": false,
+  // Created and attached on deploy (the coldforge.work zone must be in this Cloudflare account).
+  "routes": [{ "pattern": "coldforge.work", "custom_domain": true }]
+}
