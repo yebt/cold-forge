@@ -1,0 +1,5 @@
+lib/
+# Param files: .env.<projectId> is committed (non-secret deploy params); local overrides are not.
+!.env.coldforge-work
+.env.local
+.secret.local

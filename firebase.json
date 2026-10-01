@@ -8,14 +8,34 @@
       "source": "apps/functions",
       "codebase": "default",
       "runtime": "nodejs22",
-      "ignore": ["node_modules", "*.test.ts"]
+      "predeploy": [
+        "bun run --cwd \"$RESOURCE_DIR\" build"
+      ],
+      "ignore": [
+        "node_modules",
+        "src",
+        "integration",
+        "build.ts",
+        "tsconfig.json",
+        "*.test.ts",
+        "*.log",
+        ".env.local"
+      ]
     }
   ],
   "emulators": {
-    "auth": { "port": 9099 },
-    "firestore": { "port": 8080 },
-    "functions": { "port": 5001 },
-    "ui": { "enabled": false },
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "functions": {
+      "port": 5001
+    },
+    "ui": {
+      "enabled": false
+    },
     "singleProjectMode": true
   }
 }
