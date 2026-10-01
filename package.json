@@ -9,6 +9,8 @@
   ],
   "scripts": {
     "dev": "bun run --filter '@cold-forge/app' --filter '@cold-forge/landing' dev",
+    "emulators": "bun run --filter '@cold-forge/functions' build && bunx firebase-tools@15.32.1 emulators:start --only auth,firestore,functions --project demo-coldforge",
+    "dev:emulators": "bun run --filter '@cold-forge/app' --filter '@cold-forge/admin' dev:emulators",
     "dev:app": "bun run --filter '@cold-forge/app' dev",
     "dev:landing": "bun run --filter '@cold-forge/landing' dev",
     "preview:cards": "bun run --filter '@cold-forge/share-card' preview",

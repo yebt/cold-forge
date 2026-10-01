@@ -6,6 +6,13 @@ const config: CapacitorConfig = {
   appName: "COLD FORGE",
   webDir: "dist",
   backgroundColor: "#070b12",
+  // Serve the bundled app from https://app.coldforge.work inside the WebView (still local files,
+  // nothing is fetched from the network). Keeps the origin identical to the PWA, so the browser
+  // API key and Firebase authorized domains never need to allow https://localhost.
+  server: {
+    hostname: "app.coldforge.work",
+    androidScheme: "https",
+  },
   plugins: {
     LocalNotifications: {
       iconColor: "#7DD3FC",

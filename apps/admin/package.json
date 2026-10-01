@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:emulators": "vite --mode emulators",
     "dev:mock": "VITE_ADMIN_MOCK=1 vite",
-    "dev:emulators": "VITE_USE_EMULATORS=1 vite",
     "build": "vite build && bun run check-bundle.ts",
     "check:bundle": "bun run check-bundle.ts",
     "preview": "vite preview",

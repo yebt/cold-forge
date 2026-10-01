@@ -87,7 +87,8 @@ allow-list policy for the owner's email).
 ## 2. Firebase
 
 1. **Authentication → Settings → Authorized domains**: add `coldforge.work`, `app.coldforge.work`,
-   `admin.coldforge.work` (`localhost` and `coldforge-work.firebaseapp.com` are there by default).
+   `admin.coldforge.work`. `coldforge-work.firebaseapp.com` is there by default; **remove `localhost`**
+   (local development uses the emulators with a `demo-` project, see "Local development" below).
    Preview deploys (`*.pages.dev`) are intentionally *not* authorized: Google sign-in only works on
    the real domains.
 2. **Authentication → Sign-in method**: enable Google.
@@ -98,8 +99,12 @@ allow-list policy for the owner's email).
      - `https://app.coldforge.work/*`
      - `https://admin.coldforge.work/*`
      - `https://coldforge-work.firebaseapp.com/*` (the Google sign-in handler page runs there)
-     - `http://localhost:*/*` and `http://127.0.0.1:*/*` (development)
-     - `https://localhost/*` (the Android app: Capacitor's WebView origin is `https://localhost`)
+
+     No `localhost` entries: development runs against the emulators, and the Android app serves its
+     bundled files from `https://app.coldforge.work` inside the WebView (`server.hostname` in
+     `apps/app/capacitor.config.ts`), so it shares the PWA's origin. Note that a referrer restriction
+     only stops other *websites* from using the key in a browser; scripts can fake the header. The
+     controls against scripts are the Firestore rules, the quotas and App Check.
    - API restrictions → **Restrict key**: Identity Toolkit API, Token Service API, Cloud Firestore API
      (add Firebase Installations API only if a Firebase product later needs it; there is no Analytics).
 4. **Android app (for native Google sign-in in the APK)**: Project settings → Add app → Android,
@@ -161,8 +166,9 @@ code is not even in the bundle.
 
 To enable and then enforce:
 
-1. Google Cloud console → reCAPTCHA Enterprise → create a **website** key for `app.coldforge.work`,
-   `admin.coldforge.work` (and `localhost` for dev, or use a debug token).
+1. Google Cloud console → reCAPTCHA Enterprise → create a **website** key (score-based, no checkbox
+   challenge) for `app.coldforge.work` and `admin.coldforge.work`. Local development uses the emulators,
+   which don't need App Check.
 2. Firebase console → App Check → register both web apps with the reCAPTCHA Enterprise provider and
    that key.
 3. Set `VITE_APPCHECK_SITE_KEY` (Pages variable or `.env.production`) for `apps/app` and `apps/admin`,
@@ -173,9 +179,11 @@ To enable and then enforce:
 
 **Sideloaded APK caveat.** The Android APK is distributed through GitHub Releases, not Google Play.
 App Check's Android provider is Play Integrity, which won't vouch for an app that wasn't installed from
-Play (its app-recognition verdict fails), and the web reCAPTCHA provider doesn't work inside the
-Capacitor WebView (`https://localhost` origin). So the APK sends no App Check token, and **enforcing
-App Check on Firestore would lock every APK user out of sync.** Options, in order of preference:
+Play (its app-recognition verdict fails). The WebView now serves the app from `https://app.coldforge.work`,
+so the web reCAPTCHA provider *may* work inside the APK, but Google does not guarantee reCAPTCHA in
+WebViews and scores there tend to be low. Until that is verified on real devices (App Check → Metrics,
+filter by the Android user agent), assume **enforcing App Check on Firestore could lock APK users out
+of sync.** Options, in order of preference:
 - keep Firestore enforcement **off** while the GitHub APK exists (enforce only on the admin callables);
 - publish the APK on Google Play and add `@capacitor-firebase/app-check` with Play Integrity;
 - a debug provider with a per-build debug token: it works, but the token ships inside the APK and is
@@ -315,3 +323,18 @@ CHROMIUM_PATH=/path/to/chrome bun brand/screenshots.ts
   so iPhone users should install it (or sign in to sync).
 - **Android APK vs PWA**: same bundle. The APK never registers the service worker (Capacitor serves the
   files) and updates only when the user installs a newer APK.
+
+
+## Local development (emulators, no real project)
+
+The production project allows no `localhost` origin, so local work runs against the Firebase emulators
+with an offline `demo-coldforge` project (`.env.emulators` in `apps/app` and `apps/admin`, committed:
+it contains no real keys). Requires Java 21.
+
+```sh
+bun run emulators        # terminal 1: Auth :9099, Firestore :8080, Functions :5001 (builds functions first)
+bun run dev:emulators    # terminal 2: app on :5173 and admin panel against the emulators
+```
+
+The Auth emulator shows a fake Google account picker: type any email to sign in. Data lives only in
+the emulators and disappears when they stop. `bun run dev` (no emulators) runs the app guest-only.
