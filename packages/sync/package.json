@@ -1,0 +1,17 @@
+{
+  "name": "@cold-forge/sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@cold-forge/core": "workspace:*",
+    "@cold-forge/i18n": "workspace:*"
+  }
+}

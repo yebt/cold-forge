@@ -73,6 +73,14 @@
         "@cold-forge/i18n": "workspace:*",
       },
     },
+    "packages/sync": {
+      "name": "@cold-forge/sync",
+      "version": "0.1.0",
+      "dependencies": {
+        "@cold-forge/core": "workspace:*",
+        "@cold-forge/i18n": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@astrojs/astro2tsx": ["@astrojs/astro2tsx@0.1.2", "", { "dependencies": { "@emnapi/core": "1.11.3", "@napi-rs/wasm-runtime": "1.2.4" } }, "sha512-Uj/M9zbrhu5cIZEvWAGTbQJRKSxXWJ/E59BZwt7F+chrKhbfttW+9rkS/l+1QxoJP1KU3UnpM62M7yszfAI0WA=="],
@@ -174,6 +182,8 @@
     "@cold-forge/landing": ["@cold-forge/landing@workspace:apps/landing"],
 
     "@cold-forge/share-card": ["@cold-forge/share-card@workspace:packages/share-card"],
+
+    "@cold-forge/sync": ["@cold-forge/sync@workspace:packages/sync"],
 
     "@emmetio/abbreviation": ["@emmetio/abbreviation@2.3.3", "", { "dependencies": { "@emmetio/scanner": "^1.0.4" } }, "sha512-mgv58UrU3rh4YgbE/TzgLQwJ3pFsHHhCLqY20aJq+9comytTXUDNGG/SMtSeMJdkpxgXSXunBGLD8Boka3JyVA=="],
 
