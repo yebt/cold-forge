@@ -2,14 +2,13 @@
 import type { GetStaticPaths } from "astro";
 import Base from "../../layouts/Base.astro";
 import Hero from "../../components/Hero.astro";
-import HowItWorks from "../../components/HowItWorks.astro";
-import Features from "../../components/Features.astro";
-import Ranks from "../../components/Ranks.astro";
-import ShareShowcase from "../../components/ShareShowcase.astro";
-import Habits from "../../components/Habits.astro";
-import Milestones from "../../components/Milestones.astro";
+import Deal from "../../components/Deal.astro";
+import Phases from "../../components/Phases.astro";
+import Forge from "../../components/Forge.astro";
+import Proof from "../../components/Proof.astro";
+import Privacy from "../../components/Privacy.astro";
 import Faq from "../../components/Faq.astro";
-import GetApp from "../../components/GetApp.astro";
+import FinalCta from "../../components/FinalCta.astro";
 import { LOCALES, type Locale } from "../../i18n/index.ts";
 
 export const getStaticPaths = (() => LOCALES.map((locale) => ({ params: { locale } }))) satisfies GetStaticPaths;
@@ -19,12 +18,11 @@ const locale = Astro.params.locale as Locale;
 
 <Base locale={locale}>
   <Hero locale={locale} />
-  <HowItWorks locale={locale} />
-  <Features locale={locale} />
-  <Ranks locale={locale} />
-  <ShareShowcase locale={locale} />
-  <Habits locale={locale} />
-  <Milestones locale={locale} />
+  <Deal locale={locale} />
+  <Phases locale={locale} />
+  <Forge locale={locale} />
+  <Proof locale={locale} />
+  <Privacy locale={locale} />
   <Faq locale={locale} />
-  <GetApp locale={locale} />
+  <FinalCta locale={locale} />
 </Base>

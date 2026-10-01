@@ -1,0 +1,67 @@
+---
+import { APK_URL, APP_URL } from "astro:env/client";
+import { useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t } = useCopy(Astro.props.locale);
+---
+
+<section class="cta" id="start" aria-labelledby="cta-title">
+  <div class="heat" aria-hidden="true"></div>
+  <div class="container inner">
+    <p class="label kicker">{t.cta.kicker}</p>
+    <h2 id="cta-title" class="display title">
+      <span>{t.cta.titleA}</span>
+      <span>{t.cta.titleB}</span>
+    </h2>
+    <a class="btn btn-ember" href={APP_URL}>{t.cta.start}</a>
+    <a class="apk" href={APK_URL} rel="noopener">{t.cta.apk}</a>
+  </div>
+</section>
+
+<style>
+  .cta {
+    position: relative;
+    isolation: isolate;
+    overflow: clip;
+    padding: clamp(112px, 14vw, 180px) 0 clamp(104px, 12vw, 160px);
+    background: radial-gradient(90% 80% at 50% 100%, #2a1408 0%, #0a0a0b 60%, var(--bg) 100%);
+    text-align: center;
+  }
+  /* Extra ember bloom from below; decorative only. */
+  .heat {
+    position: absolute;
+    left: 50%;
+    bottom: -30%;
+    z-index: -1;
+    width: min(900px, 160vw);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgb(240 138 75 / 0.22), rgb(240 138 75 / 0) 70%);
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .inner {
+    max-width: calc(980px + var(--gutter-l) + var(--gutter-r));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+  }
+  .kicker { color: var(--ember-dim); line-height: 1.6; }
+  .title { font-size: clamp(3rem, 8vw, 7.5rem); line-height: var(--display-lh); }
+  .btn { margin-top: 12px; }
+  .apk {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    font-size: 0.9375rem;
+    color: var(--text-2);
+    text-underline-offset: 4px;
+  }
+  @media (max-width: 760px) {
+    .btn { width: 100%; }
+  }
+</style>

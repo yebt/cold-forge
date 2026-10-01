@@ -1,0 +1,45 @@
+---
+import { useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t } = useCopy(Astro.props.locale);
+---
+
+<section class="deal section" id="deal" aria-labelledby="deal-title">
+  <div class="container stack">
+    <h2 id="deal-title" class="label">{t.deal.kicker}</h2>
+    <p class="display lines">
+      {t.deal.lines.map((line) => <span>{line}</span>)}
+      <span class="ember">{t.deal.end}</span>
+    </p>
+    <p class="body">{t.deal.body}</p>
+  </div>
+</section>
+
+<style>
+  .deal { background: var(--bg); }
+  .stack { display: flex; flex-direction: column; gap: clamp(36px, 5vw, 56px); }
+  .lines {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    font-size: clamp(2.25rem, 7vw, 6.5rem);
+    line-height: var(--display-lh);
+    text-wrap: balance;
+  }
+  /* White fading into the dark, then the ember promise. */
+  .lines span:nth-child(1) { color: var(--text); }
+  .lines span:nth-child(2) { color: #8a9cad; }
+  .lines span:nth-child(3) { color: #5a6b7b; }
+  .lines span:nth-child(4) { color: #3a4856; }
+  .lines .ember { color: var(--ember); text-shadow: 0 0 48px rgb(240 138 75 / 0.25); }
+  .body {
+    font-size: clamp(1.125rem, 1.6vw, 1.25rem);
+    line-height: 1.6;
+    color: var(--muted);
+    max-width: 620px;
+    text-wrap: pretty;
+  }
+</style>

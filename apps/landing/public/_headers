@@ -1,8 +1,9 @@
 # Cloudflare Pages headers for the landing (coldforge.work).
 # The landing is static, has no forms, sessions or user data, and uses Astro's small inline scripts,
-# so the CSP only locks down framing, plugins, <base> and form targets (no script/style restrictions).
+# so the CSP locks down framing, plugins, <base> and form targets (no script/style restrictions).
+# Fonts are self-hosted (Anton, Archivo, IBM Plex Mono via @fontsource), so font-src is 'self' only.
 /*
-  Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
+  Content-Security-Policy: font-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; upgrade-insecure-requests
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()

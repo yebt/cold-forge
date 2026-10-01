@@ -1,0 +1,107 @@
+---
+import { ARC_DAYS, FORGE_RANKS } from "@cold-forge/core";
+import { fmt, useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t, m } = useCopy(Astro.props.locale);
+
+// Illustrative card values (labelled "example" on the page).
+const DAY = 47;
+const STREAK = 21;
+const rank = FORGE_RANKS.find((r) => r.id === "steel") ?? FORGE_RANKS[0];
+const now = new Date();
+// Jan–Mar still belongs to last winter's arc.
+const arcYear = now.getMonth() < 3 ? now.getFullYear() - 1 : now.getFullYear();
+---
+
+<section class="proof section" aria-labelledby="proof-title">
+  <div class="container grid">
+    <div class="visual">
+      <div class="story" role="img" aria-label={t.a11y.storyCard}>
+        <span class="story-arc">{m.arcTitles.winter(arcYear)}</span>
+        <span class="story-num">{DAY}</span>
+        <span class="story-day">{m.stats.day(DAY, ARC_DAYS)}</span>
+        <span class="story-meta">{fmt(t.proof.streak, { days: m.days(STREAK) })}{rank ? ` · ${m.ranks[rank.id]}` : ""}</span>
+        <span class="story-foot">COLD FORGE · #WINTERARC</span>
+      </div>
+    </div>
+    <div class="copy">
+      <h2 id="proof-title" class="display h2">
+        <span>{t.proof.titleA}</span>
+        <span>{t.proof.titleB}</span>
+      </h2>
+      <p class="lede">{t.proof.body}</p>
+      <p class="note">{t.proof.note}</p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .proof { background: var(--bg); border-top: 1px solid var(--line); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+    gap: clamp(48px, 6vw, 72px);
+    align-items: center;
+  }
+  .copy { display: flex; flex-direction: column; gap: 22px; }
+  .copy .h2 { font-size: clamp(2.75rem, 5.4vw, 4.75rem); }
+  .note { font-family: var(--mono); font-size: 0.8125rem; color: var(--dim); }
+
+  .visual { display: flex; justify-content: center; }
+  /* 9:16 story card. Sizes inside are relative to the card width (container query units). */
+  .story {
+    container-type: inline-size;
+    position: relative;
+    width: min(300px, 100%);
+    aspect-ratio: 9 / 16;
+    border-radius: 22px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: radial-gradient(100% 60% at 50% 0%, #12273a 0%, #070b10 70%);
+    box-shadow: 0 40px 100px -40px rgb(240 138 75 / 0.35), 0 0 0 1px rgb(255 255 255 / 0.02) inset;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3.4cqi;
+    text-align: center;
+  }
+  .story-arc,
+  .story-foot {
+    font-family: var(--mono);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+  .story-arc { font-size: max(10px, 3.7cqi); color: var(--muted); }
+  .story-num {
+    font-family: var(--font-display);
+    font-size: 37cqi;
+    line-height: 0.9;
+    color: var(--ember);
+    text-shadow: 0 0 40px rgb(240 138 75 / 0.45);
+    animation: ember 3s ease-in-out infinite;
+  }
+  .story-day {
+    font-family: var(--font-display);
+    font-size: 7.3cqi;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .story-meta { font-size: max(11px, 4.3cqi); color: var(--muted); padding-inline: 8cqi; }
+  .story-foot {
+    position: absolute;
+    bottom: 7cqi;
+    font-size: max(9px, 3.3cqi);
+    color: var(--dim);
+  }
+  @keyframes ember {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .story-num { animation: none; }
+  }
+</style>

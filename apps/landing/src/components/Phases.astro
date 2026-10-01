@@ -1,0 +1,111 @@
+---
+import { MILESTONE_DAYS } from "@cold-forge/core";
+import { fmt, useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t, m } = useCopy(Astro.props.locale);
+
+/** October, November, December. Their lengths add up to ARC_DAYS (92). */
+const MONTH_DAYS = [31, 30, 31];
+const TONES = ["tone-ice", "tone-white", "tone-ember"] as const;
+
+let from = 1;
+const phases = t.phases.items.map((item, i) => {
+  const to = from + (MONTH_DAYS[i] ?? 0) - 1;
+  const milestones = MILESTONE_DAYS.filter((d) => d >= from && d <= to);
+  const phase = { ...item, from, to, tone: TONES[i] ?? "tone-ice", milestones };
+  from = to + 1;
+  return phase;
+});
+---
+
+<section class="phases section" id="arc" aria-labelledby="phases-title">
+  <div class="container stack">
+    <div class="head">
+      <h2 id="phases-title" class="display h2">
+        <span>{t.phases.titleA}</span>
+        <span>{t.phases.titleB}</span>
+      </h2>
+      <p class="lede">{t.phases.sub}</p>
+    </div>
+    <ol class="cards">
+      {
+        phases.map((p) => (
+          <li class={`card ${p.tone}`}>
+            <p class="range">{fmt(t.phases.range, { month: p.month, from: p.from, to: p.to })}</p>
+            <h3 class="display name">{p.title}</h3>
+            <p class="text">{p.body}</p>
+            <ul class="milestones" aria-label={t.phases.milestonesLabel}>
+              {p.milestones.map((n) => (
+                <li>{fmt(t.phases.milestone, { n, title: m.milestones[n] ?? "" })}</li>
+              ))}
+            </ul>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<style>
+  .phases {
+    background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+    border-top: 1px solid var(--line);
+  }
+  .stack { display: flex; flex-direction: column; gap: clamp(44px, 6vw, 64px); }
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px 32px;
+    flex-wrap: wrap;
+  }
+  .head .lede { max-width: 400px; }
+
+  .cards {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+    gap: 20px;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: clamp(28px, 3vw, 36px) clamp(22px, 3vw, 32px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: rgb(124 196 234 / 0.04);
+  }
+  .card.tone-white { background: rgb(238 243 247 / 0.03); }
+  .card.tone-ember {
+    border-color: #3a2418;
+    background: rgb(240 138 75 / 0.06);
+    box-shadow: 0 30px 80px -50px rgb(240 138 75 / 0.6);
+  }
+  .range {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--ice);
+  }
+  .tone-white .range { color: var(--text-2); }
+  .tone-ember .range { color: var(--ember); }
+  .name { font-size: clamp(2.5rem, 4vw, 3rem); line-height: 1; }
+  .text { font-size: 1.0625rem; line-height: 1.6; color: var(--muted); flex: 1; text-wrap: pretty; }
+  .milestones {
+    list-style: none;
+    display: grid;
+    gap: 6px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+  .tone-ember .milestones { border-top-color: #3a2418; }
+</style>

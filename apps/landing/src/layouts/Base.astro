@@ -2,9 +2,9 @@
 import "../styles/global.css";
 import { LOCALE_NAMES } from "@cold-forge/i18n";
 import { getRelativeLocaleUrl } from "astro:i18n";
-import { LOCALES, useCopy, type Locale } from "../i18n/index.ts";
-import Logo from "../components/Logo.astro";
 import { APP_URL } from "astro:env/client";
+import { LOCALES, useCopy, type Locale } from "../i18n/index.ts";
+import Fonts from "../components/Fonts.astro";
 
 interface Props {
   locale: Locale;
@@ -24,12 +24,12 @@ const year = new Date().getFullYear();
 <html lang={locale}>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script is:inline>document.documentElement.classList.add("js");</script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{t.meta.title}</title>
     <meta name="description" content={t.meta.description} />
-    <meta name="theme-color" content="#070b12" />
+    <meta name="theme-color" content="#05070a" />
     <meta name="color-scheme" content="dark" />
+    <Fonts />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -54,235 +54,176 @@ const year = new Date().getFullYear();
     <meta name="twitter:image" content={ogImage} />
   </head>
   <body>
-    <a class="skip" href="#main">{t.a11y.skip}</a>
+    <div class="page">
+      <a class="skip" href="#main">{t.a11y.skip}</a>
 
-    <header class="site-header">
-      <div class="container bar">
-        <a class="brand" href={getRelativeLocaleUrl(locale)} aria-label={t.a11y.home}>
-          <Logo size={34} />
-          <span class="brand-name" aria-hidden="true">COLD<span> FORGE</span></span>
-        </a>
+      <header class="site-header">
+        <div class="bar">
+          <a class="brand" href={getRelativeLocaleUrl(locale)} aria-label={t.a11y.home}>COLD FORGE</a>
+          <nav class="nav" aria-label={t.a11y.mainNav}>
+            <a class="nav-link" href="#deal">{t.nav.deal}</a>
+            <a class="nav-link" href="#arc">{t.nav.arc}</a>
+            <a class="nav-link" href="#faq">{t.nav.faq}</a>
+            <a class="nav-cta" href={APP_URL}>{t.nav.cta}</a>
+          </nav>
+        </div>
+      </header>
 
-        <nav class="nav" aria-label={t.a11y.mainNav}>
-          <a href="#how">{t.nav.how}</a>
-          <a href="#features">{t.nav.features}</a>
-          <a href="#ranks">{t.nav.ranks}</a>
-          <a href="#faq">{t.nav.faq}</a>
-        </nav>
+      <main id="main" tabindex="-1">
+        <slot />
+      </main>
 
-        <div class="bar-end">
-          <nav class="lang" aria-label={t.a11y.language}>
-            <ul>
+      <footer class="site-footer">
+        <div class="container foot">
+          <span class="foot-brand">COLD FORGE</span>
+          <nav aria-label={t.a11y.language}>
+            <ul class="langs">
               {
                 LOCALES.map((l) => (
                   <li>
-                    <a
-                      href={getRelativeLocaleUrl(l)}
-                      hreflang={l}
-                      lang={l}
-                      aria-current={l === locale ? "page" : undefined}
-                      title={LOCALE_NAMES[l]}
-                    >
-                      <span aria-hidden="true">{l.toUpperCase()}</span>
-                      <span class="sr-only">{LOCALE_NAMES[l]}</span>
+                    <a href={getRelativeLocaleUrl(l)} hreflang={l} lang={l} aria-current={l === locale ? "page" : undefined}>
+                      {LOCALE_NAMES[l]}
                     </a>
                   </li>
                 ))
               }
             </ul>
           </nav>
-          <a class="btn btn-fire header-cta" href={APP_URL}>{t.nav.cta}</a>
+          <p class="foot-legal">© {year} COLD FORGE · #WinterArc</p>
         </div>
-      </div>
-    </header>
-
-    <main id="main" tabindex="-1">
-      <slot />
-    </main>
-
-    <footer class="site-footer">
-      <div class="container foot">
-        <div class="foot-brand">
-          <Logo size={40} />
-          <div>
-            <p class="foot-name">{m.appName}</p>
-            <p class="foot-tag">{m.tagline} {t.footer.line}</p>
-          </div>
-        </div>
-        <ul class="foot-links">
-          {
-            LOCALES.map((l) => (
-              <li>
-                <a href={getRelativeLocaleUrl(l)} hreflang={l} lang={l} aria-current={l === locale ? "page" : undefined}>
-                  {LOCALE_NAMES[l]}
-                </a>
-              </li>
-            ))
-          }
-          <li><a href="#main">{t.footer.top} ↑</a></li>
-        </ul>
-        <p class="foot-legal">© {year} {m.appName}. {t.footer.rights} #WinterArc</p>
-      </div>
-    </footer>
-
-    <script>
-      // Scroll reveal. Elements are only hidden by CSS when JS runs and motion is allowed.
-      const els = document.querySelectorAll<HTMLElement>("[data-reveal]");
-      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (reduce || !("IntersectionObserver" in window)) {
-        els.forEach((el) => el.classList.add("is-visible"));
-      } else {
-        const io = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) {
-              if (entry.isIntersecting) {
-                entry.target.classList.add("is-visible");
-                io.unobserve(entry.target);
-              }
-            }
-          },
-          { rootMargin: "0px 0px -8% 0px", threshold: 0.08 },
-        );
-        els.forEach((el) => io.observe(el));
-      }
-    </script>
+      </footer>
+    </div>
   </body>
 </html>
 
 <style>
   .skip {
     position: absolute;
-    left: 12px;
-    top: -60px;
+    left: var(--gutter-l);
+    top: 0;
     z-index: 100;
-    padding: 10px 16px;
-    border-radius: 10px;
-    background: var(--ice);
+    padding: 12px 18px;
+    border-radius: 999px;
+    background: var(--text);
     color: var(--bg);
     font-weight: 800;
     text-decoration: none;
+    transform: translateY(-120%);
   }
-  .skip:focus { top: 12px; }
+  .skip:focus { transform: translateY(calc(12px + env(safe-area-inset-top))); }
 
   main:focus { outline: none; }
 
+  /* Sits over the hero and scrolls away with it: never covers content further down. */
   .site-header {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    background: rgb(7 11 18 / 0.72);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
-    border-bottom: 1px solid rgb(29 42 61 / 0.7);
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 10;
+    padding-top: env(safe-area-inset-top);
   }
   .bar {
+    max-width: 1280px;
+    margin-inline: auto;
+    padding-inline: var(--gutter-l) var(--gutter-r);
+    height: 76px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    min-height: 64px;
   }
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
-    color: var(--text);
+    min-height: 44px;
+    font-family: var(--font-display);
+    font-size: 1.375rem;
+    letter-spacing: 0.12em;
     text-decoration: none;
-    flex-shrink: 0;
-  }
-  .brand-name {
-    font-weight: 900;
-    letter-spacing: 0.16em;
-    font-size: 0.95rem;
     white-space: nowrap;
   }
-  .brand-name span { color: var(--ice); }
-
-  .nav { display: none; gap: 28px; }
-  .nav a {
+  .nav { display: flex; align-items: center; gap: 24px; }
+  .nav-link {
+    display: none;
+    align-items: center;
+    min-height: 44px;
     color: var(--muted);
+    font-size: 0.875rem;
     text-decoration: none;
-    font-weight: 700;
-    font-size: 0.95rem;
     transition: color 0.2s;
   }
-  .nav a:hover { color: var(--text); }
-
-  .bar-end { display: flex; align-items: center; gap: 12px; }
-
-  .lang ul {
-    display: flex;
-    list-style: none;
-    padding: 3px;
-    gap: 2px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--panel-2);
-  }
-  .lang a {
-    display: grid;
-    place-items: center;
-    min-width: 40px;
-    min-height: 36px;
-    padding: 0 8px;
-    border-radius: 9px;
-    font-size: 0.8rem;
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    color: var(--muted);
+  .nav-link:hover { color: var(--text); }
+  .nav-cta {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 18px;
+    border: 1px solid rgb(238 243 247 / 0.5);
+    border-radius: 999px;
+    font-size: 0.875rem;
+    font-weight: 600;
     text-decoration: none;
+    white-space: nowrap;
+    background: rgb(5 7 10 / 0.3);
+    transition: border-color 0.2s, background-color 0.2s;
   }
-  .lang a:hover { color: var(--text); }
-  .lang a[aria-current="page"] {
-    color: var(--bg);
-    background: var(--ice);
-  }
+  .nav-cta:hover { border-color: var(--text); background: rgb(238 243 247 / 0.08); }
 
-  .header-cta { display: none; min-height: 42px; padding: 8px 16px; font-size: 0.92rem; border-radius: 12px; }
-
-  @media (min-width: 680px) {
-    .header-cta { display: inline-flex; }
+  @media (min-width: 761px) {
+    .nav-link { display: inline-flex; }
   }
-  @media (min-width: 1000px) {
-    .nav { display: flex; }
+  @media (max-width: 760px) {
+    .bar { height: 64px; }
   }
-  @media (max-width: 380px) {
-    .brand-name { font-size: 0.85rem; letter-spacing: 0.12em; }
+  @media (max-width: 359px) {
+    .brand { font-size: 1.125rem; letter-spacing: 0.08em; }
+    .nav-cta { padding: 0 14px; font-size: 0.8125rem; }
   }
 
   .site-footer {
-    border-top: 1px solid var(--border);
-    padding-block: 48px 40px;
-    background: linear-gradient(180deg, transparent, rgb(16 32 58 / 0.25));
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
   }
   .foot {
-    display: grid;
-    gap: 28px;
+    padding-block: 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px 24px;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    color: var(--dim);
   }
-  .foot-brand { display: flex; align-items: center; gap: 14px; }
-  .foot-name { font-weight: 900; letter-spacing: 0.16em; }
-  .foot-tag { color: var(--muted); font-size: 0.95rem; }
-  .foot-links {
+  .foot-brand {
+    font-family: var(--font-display);
+    font-size: 1.125rem;
+    letter-spacing: 0.12em;
+    color: var(--text);
+  }
+  .langs {
     list-style: none;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 22px;
+    gap: 0 4px;
+    margin-inline: -4px;
   }
-  .foot-links a {
-    color: var(--muted);
+  .langs li + li::before {
+    content: "·";
+    margin-right: 4px;
+    color: var(--dim);
+  }
+  .langs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding-inline: 4px;
+    color: var(--dim);
     text-decoration: none;
-    font-weight: 700;
-    font-size: 0.95rem;
   }
-  .foot-links a:hover,
-  .foot-links a[aria-current="page"] { color: var(--ice); }
-  .foot-legal { color: var(--muted); font-size: 0.85rem; }
+  .langs a:hover { color: var(--text); }
+  .langs a[aria-current="page"] { color: var(--text); text-decoration: underline; text-underline-offset: 6px; text-decoration-color: var(--ice); }
 
-  @media (min-width: 860px) {
-    .foot {
-      grid-template-columns: 1fr auto;
-      align-items: center;
-    }
-    .foot-legal { grid-column: 1 / -1; }
+  @media (max-width: 760px) {
+    .foot { flex-direction: column; align-items: flex-start; }
   }
 </style>

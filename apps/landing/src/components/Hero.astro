@@ -1,8 +1,7 @@
 ---
 import { ARC_DAYS } from "@cold-forge/core";
-import { useCopy, type Locale } from "../i18n/index.ts";
-import PhoneMock from "./PhoneMock.astro";
 import { APK_URL, APP_URL } from "astro:env/client";
+import { fmt, useCopy, type Locale } from "../i18n/index.ts";
 
 interface Props {
   locale: Locale;
@@ -10,64 +9,79 @@ interface Props {
 const { locale } = Astro.props;
 const { t } = useCopy(locale);
 const c = t.hero.countdown;
+
+/** Flakes on wide screens; CSS keeps only the first 40 on phones. */
+const FLAKES = 96;
+
+// Deterministic snowfall (same Park–Miller generator as the mockup): identical markup on every build.
+let seed = 7;
+const rnd = () => {
+  seed = (seed * 16807) % 2147483647;
+  return (seed - 1) / 2147483646;
+};
+const flakes = Array.from({ length: FLAKES }, () => {
+  const size = 1 + rnd() * 2.6;
+  const dur = 9 + rnd() * 14;
+  return [
+    `--x:${(rnd() * 100).toFixed(2)}%`,
+    `--s:${size.toFixed(1)}px`,
+    `--o:${(0.25 + rnd() * 0.6).toFixed(2)}`,
+    `--d:${dur.toFixed(1)}s`,
+    `--delay:${(-rnd() * dur).toFixed(1)}s`,
+    `--drift:${(10 + rnd() * 30).toFixed(0)}px`,
+  ].join(";");
+});
 ---
 
 <section class="hero" aria-labelledby="hero-title">
-  <div class="frost" aria-hidden="true"></div>
-  <div class="container grid">
-    <div class="copy">
-      <p class="eyebrow intro"><span class="dot" aria-hidden="true"></span>{t.hero.eyebrow}</p>
-      <h1 id="hero-title" class="intro" style="--intro-delay:60ms">
-        <span class="wordmark">COLD FORGE</span>
-        <span class="line">{t.hero.titleA}</span>
-        <span class="line hot"><span class="fire-text">{t.hero.titleB}</span></span>
-      </h1>
-      <p class="sub intro" style="--intro-delay:120ms">{t.hero.sub}</p>
-
-      <div
-        class="countdown card intro"
-        style="--intro-delay:180ms"
-        data-countdown
-        data-total={ARC_DAYS}
-        data-upcoming={c.upcoming}
-        data-upcoming-one={c.upcomingOne}
-        data-upcoming-sub={c.upcomingSub}
-        data-active={c.active}
-        data-active-sub={c.activeSub}
-        data-active-sub-last={c.activeSubLast}
-        data-finished={c.finished}
-        data-finished-sub={c.finishedSub}
-      >
-        <div class="cd-row">
-          <span class="cd-label">❄️ {c.label}</span>
-          <span class="cd-live" aria-hidden="true"></span>
-        </div>
-        <p class="cd-main" data-cd-main aria-live="polite">{c.fallback}</p>
-        <p class="cd-sub" data-cd-sub hidden></p>
-        <div class="cd-bar" aria-hidden="true"><span data-cd-bar></span></div>
-      </div>
-
-      <div class="ctas intro" style="--intro-delay:240ms">
-        <div class="primary">
-          <a class="btn btn-fire btn-lg" href={APP_URL}>{t.hero.openApp} <span aria-hidden="true">→</span></a>
-          <p class="cta-note"><span class="tick" aria-hidden="true">✓</span>{t.hero.openAppNote}</p>
-        </div>
-        <div class="apk-row">
-          <a class="apk" href={APK_URL} rel="noopener">
-            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-              <path fill="#3ddc84" d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"></path>
-            </svg>
-            <span class="apk-text"><small>{t.hero.apkPlatform}</small>{t.hero.apk}</span>
-            <span class="apk-dl" aria-hidden="true">↓</span>
-          </a>
-          <p class="apk-note">{t.hero.apkNote} <span class="later">{t.hero.storesLater}</span></p>
-        </div>
-      </div>
+  <div class="sky" aria-hidden="true">
+    <div class="snow">
+      {flakes.map((style) => <span style={style}></span>)}
     </div>
+    <div class="glow"></div>
+    <svg class="ridges" viewBox="0 0 1440 260" preserveAspectRatio="none" focusable="false">
+      <path d="M0 170 L140 110 L230 150 L360 60 L470 140 L560 100 L690 30 L820 130 L930 90 L1050 150 L1170 70 L1290 140 L1440 100 L1440 260 L0 260 Z" fill="#0B121A"></path>
+      <path d="M0 210 L120 170 L260 205 L400 150 L540 200 L700 140 L860 205 L1010 165 L1150 210 L1300 160 L1440 195 L1440 260 L0 260 Z" fill="#05070A"></path>
+      <path d="M690 30 L715 48 L700 46 L688 60 L676 47 L664 50 Z" fill="#DDE8F0" opacity="0.7"></path>
+      <path d="M360 60 L382 78 L368 76 L357 88 L346 77 L338 80 Z" fill="#DDE8F0" opacity="0.5"></path>
+      <path d="M1170 70 L1190 86 L1176 84 L1167 96 L1157 85 L1150 88 Z" fill="#DDE8F0" opacity="0.5"></path>
+    </svg>
+  </div>
 
-    <div class="visual intro" style="--intro-delay:200ms">
-      <PhoneMock locale={locale} />
+  <div class="inner container">
+    <p class="label eyebrow">{fmt(t.hero.eyebrow, { days: ARC_DAYS })}</p>
+    <h1 id="hero-title" class="display title">
+      <span>{t.hero.titleA}</span>
+      <span class="ice">{t.hero.titleB}</span>
+      <span>{t.hero.titleC}</span>
+    </h1>
+    <p class="sub">{t.hero.sub}</p>
+    <div class="ctas">
+      <a class="btn btn-light" href={APP_URL}>
+        {t.hero.start}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+      <a class="btn btn-ghost" href={APK_URL} rel="noopener">{t.hero.apk}</a>
     </div>
+    <p class="trust">{t.hero.trust}</p>
+  </div>
+
+  <div
+    class="countdown"
+    data-countdown
+    data-total={ARC_DAYS}
+    data-to-jan={c.toJan}
+    data-to-jan-one={c.toJanOne}
+    data-day={c.day}
+    data-to-arc={c.toArc}
+    data-to-arc-one={c.toArcOne}
+    data-to-next={c.toNext}
+  >
+    <p class="count-row">
+      <span class="count-num" data-cd-num>{ARC_DAYS}</span>
+      <span class="count-label" data-cd-label>{c.fallback}</span>
+    </p>
+    <p class="count-day" data-cd-day hidden></p>
   </div>
 </section>
 
@@ -77,53 +91,40 @@ const c = t.hero.countdown;
   const fill = (tpl: string, values: Record<string, number>) =>
     tpl.replace(/\{(\w+)\}/g, (m, k: string) => (k in values ? String(values[k]) : m));
 
+  /**
+   * Arc-aware countdown, on the visitor's local calendar:
+   * - Oct 1 → Dec 31: days until January 1, plus "Day X of 92".
+   * - Apr → Sep: days until the arc starts.
+   * - Jan → Mar: the arc just ended; days until the next one.
+   */
   function render(root: HTMLElement) {
     const d = root.dataset;
-    const main = root.querySelector<HTMLElement>("[data-cd-main]");
-    const sub = root.querySelector<HTMLElement>("[data-cd-sub]");
-    const bar = root.querySelector<HTMLElement>("[data-cd-bar]");
-    if (!main || !sub || !bar) return;
+    const num = root.querySelector<HTMLElement>("[data-cd-num]");
+    const label = root.querySelector<HTMLElement>("[data-cd-label]");
+    const dayEl = root.querySelector<HTMLElement>("[data-cd-day]");
+    if (!num || !label || !dayEl) return;
 
     const today = localToday();
     const year = Number(today.slice(0, 4));
     const { startDate, endDate } = winterArcWindow(year);
-    let state: "upcoming" | "active" | "finished";
-    let mainText: string;
-    let subText: string;
-    let progress = 0;
+    let n: number;
+    let text: string;
+    let dayText = "";
 
-    if (today < startDate) {
-      const n = diffDays(today, startDate);
-      // Jan–Mar: last winter's arc just wrapped up. Apr–Sep: next one is coming.
-      if (Number(today.slice(5, 7)) <= 3) {
-        state = "finished";
-        mainText = d.finished ?? "";
-        subText = fill(d.finishedSub ?? "", { n });
-        progress = 1;
-      } else {
-        state = "upcoming";
-        mainText = n === 1 ? (d.upcomingOne ?? "") : fill(d.upcoming ?? "", { n });
-        subText = d.upcomingSub ?? "";
-      }
-    } else if (today <= endDate) {
-      state = "active";
-      const day = diffDays(startDate, today) + 1;
-      const left = ARC_DAYS - day;
-      mainText = fill(d.active ?? "", { day, total: ARC_DAYS });
-      subText = left === 0 ? (d.activeSubLast ?? "") : fill(d.activeSub ?? "", { n: left });
-      progress = day / ARC_DAYS;
+    if (today >= startDate && today <= endDate) {
+      n = diffDays(today, `${year + 1}-01-01`);
+      text = (n === 1 ? d.toJanOne : d.toJan) ?? "";
+      dayText = fill(d.day ?? "", { day: diffDays(startDate, today) + 1, total: ARC_DAYS });
     } else {
-      state = "finished";
-      mainText = d.finished ?? "";
-      subText = "";
-      progress = 1;
+      n = diffDays(today, startDate);
+      const justEnded = Number(today.slice(5, 7)) <= 3;
+      text = (justEnded ? d.toNext : n === 1 ? d.toArcOne : d.toArc) ?? "";
     }
 
-    root.dataset.state = state;
-    main.textContent = mainText;
-    sub.textContent = subText;
-    sub.hidden = !subText;
-    bar.style.width = `${Math.max(progress * 100, state === "active" ? 2 : 0)}%`;
+    num.textContent = String(n);
+    label.textContent = text;
+    dayEl.textContent = dayText;
+    dayEl.hidden = !dayText;
   }
 
   document.querySelectorAll<HTMLElement>("[data-countdown]").forEach((el) => {
@@ -136,158 +137,155 @@ const c = t.hero.countdown;
 <style>
   .hero {
     position: relative;
-    padding-block: clamp(40px, 8vw, 96px) clamp(72px, 10vw, 120px);
+    isolation: isolate;
     overflow: clip;
+    display: flex;
+    flex-direction: column;
+    /* Small-viewport units: the hero fits under the mobile URL bar without jumping as it hides. */
+    min-height: 100vh;
+    min-height: 100svh;
+    background: radial-gradient(120% 70% at 50% 0%, #10202e 0%, #070b10 55%, var(--bg) 100%);
   }
-  .frost {
+
+  /* Decorative layers: absolute inside the hero, never capture touches. */
+  .sky {
     position: absolute;
     inset: 0;
+    z-index: -1;
     pointer-events: none;
-    background:
-      radial-gradient(600px 380px at 85% 30%, rgb(249 115 22 / 0.14), transparent 70%),
-      radial-gradient(700px 420px at 10% 0%, rgb(125 211 252 / 0.14), transparent 70%),
-      repeating-linear-gradient(115deg, rgb(125 211 252 / 0.025) 0 2px, transparent 2px 22px);
-    mask-image: linear-gradient(180deg, #000 60%, transparent);
+    overflow: hidden;
   }
-  .grid {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 56px;
-    align-items: center;
-  }
-  .copy { display: grid; gap: 22px; min-width: 0; }
-
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    justify-self: start;
-    padding: 7px 14px 7px 10px;
-    border-radius: 99px;
-    border: 1px solid var(--border-strong);
-    background: rgb(15 23 36 / 0.7);
-    font-size: 0.8rem;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--ice-pale);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
+  .snow span {
+    position: absolute;
+    top: -12px;
+    left: var(--x);
+    width: var(--s);
+    height: var(--s);
     border-radius: 50%;
-    background: var(--ember);
-    box-shadow: 0 0 0 4px rgb(249 115 22 / 0.2), 0 0 12px var(--ember);
+    background: #e6f1f8;
+    opacity: var(--o);
+    transform: translate3d(0, -20px, 0);
+    animation: fall var(--d) linear var(--delay) infinite;
+  }
+  @keyframes fall {
+    from { transform: translate3d(0, -20px, 0); }
+    to { transform: translate3d(var(--drift), 110svh, 0); }
+  }
+  /* Fewer flakes on phones. */
+  @media (max-width: 760px) {
+    .snow span:nth-child(n + 41) { display: none; }
   }
 
-  h1 {
-    display: grid;
-    font-weight: 900;
-    line-height: 0.95;
-    letter-spacing: -0.045em;
-    font-size: clamp(2.9rem, 13.5vw, 6.2rem);
+  .glow {
+    position: absolute;
+    left: 50%;
+    top: 38%;
+    width: min(720px, 150vw);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgb(124 196 234 / 0.16), rgb(124 196 234 / 0) 70%);
+    opacity: 0.45;
+    transform: translate(-50%, -50%);
+    animation: breath 7s ease-in-out infinite;
   }
-  .wordmark {
-    font-size: clamp(0.85rem, 2.6vw, 1rem);
-    letter-spacing: 0.42em;
-    color: var(--ice);
-    margin-bottom: 14px;
-    line-height: 1;
+  @keyframes breath {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.35; }
+    50% { transform: translate(-50%, -50%) scale(1.08); opacity: 0.6; }
   }
-  .line { display: block; width: fit-content; max-width: 100%; text-wrap: balance; }
-  .hot { padding-bottom: 0.08em; filter: drop-shadow(0 6px 26px rgb(249 115 22 / 0.25)); }
-  .hot .fire-text { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+
+  .ridges {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: clamp(150px, 18vw, 260px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .snow { display: none; }
+    .glow { animation: none; }
+  }
+
+  .inner {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    text-align: center;
+    max-width: 1280px;
+    padding-top: calc(108px + env(safe-area-inset-top));
+    padding-bottom: 36px;
+  }
+
+  .eyebrow { color: var(--muted); }
+
+  .title {
+    /* Bounded by width and height so the whole hero (and the countdown) fits a laptop screen. */
+    font-size: clamp(2.5rem, min(13.5vw, 13vh), 11rem);
+    font-size: clamp(2.5rem, min(13.5vw, 13svh), 11rem);
+    line-height: var(--display-lh);
+    text-wrap: initial;
+    max-width: 100%;
+  }
 
   .sub {
-    color: var(--muted);
-    font-size: clamp(1.05rem, 2.6vw, 1.25rem);
-    max-width: 54ch;
+    font-size: clamp(1.125rem, 1.6vw, 1.375rem);
+    line-height: 1.55;
+    color: #b8c6d3;
+    max-width: 620px;
     text-wrap: pretty;
   }
 
-  .countdown {
-    padding: 18px 20px;
-    display: grid;
-    gap: 8px;
-    max-width: 480px;
-    border-color: rgb(56 189 248 / 0.25);
-    box-shadow: 0 20px 50px -30px var(--ice-glow);
+  .ctas {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
+    margin-top: 8px;
   }
-  .cd-row { display: flex; justify-content: space-between; align-items: center; }
-  .cd-label {
-    font-size: 0.75rem;
-    font-weight: 800;
+  .ctas .btn-ghost { padding-inline: 26px; font-size: 1rem; }
+
+  .trust { font-size: 0.8125rem; color: var(--dim); }
+
+  .countdown {
+    position: relative;
+    padding: 0 var(--gutter-r) calc(36px + env(safe-area-inset-bottom)) var(--gutter-l);
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--ice);
+    color: var(--muted);
   }
-  .cd-live {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  [data-state="active"] .cd-live { background: var(--ember); box-shadow: 0 0 0 4px rgb(249 115 22 / 0.2); }
-  .cd-main { font-size: clamp(1.4rem, 5vw, 1.8rem); font-weight: 900; letter-spacing: -0.02em; line-height: 1.15; }
-  .cd-sub { color: var(--muted); font-size: 0.95rem; }
-  .cd-bar { height: 8px; border-radius: 99px; background: var(--border); overflow: hidden; margin-top: 6px; }
-  .cd-bar span {
-    display: block;
-    height: 100%;
-    width: 0;
-    border-radius: inherit;
-    background: linear-gradient(90deg, var(--ice-strong), var(--ember));
-    box-shadow: 0 0 12px var(--ember-glow);
-    transition: width 1.2s cubic-bezier(0.2, 0.7, 0.2, 1);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    [data-state="active"] .cd-live { animation: pulse 1.8s ease-in-out infinite; }
-  }
-  @keyframes pulse {
-    50% { box-shadow: 0 0 0 8px rgb(249 115 22 / 0); }
-  }
-
-  .ctas { display: grid; gap: 18px; }
-  .primary { display: grid; gap: 10px; }
-  .btn-lg { min-height: 58px; padding-inline: 26px; font-size: 1.08rem; border-radius: 16px; }
-  .cta-note { display: flex; align-items: center; gap: 8px; color: var(--ice-pale); font-size: 0.92rem; font-weight: 700; }
-  .tick {
-    display: inline-grid; place-items: center; width: 20px; height: 20px; flex-shrink: 0;
-    border-radius: 50%; font-size: 0.7rem; background: rgb(125 211 252 / 0.16); color: var(--ice);
-  }
-  .apk-row { display: grid; gap: 8px; }
-  .apk {
+  .count-row {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    min-height: 56px;
-    border-radius: 14px;
-    border: 1px solid var(--border-strong);
-    background: #05080d;
+    align-items: baseline;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
+  .count-num {
+    font-family: var(--font-display);
+    font-size: 2.75rem;
+    line-height: 1;
+    letter-spacing: 0.02em;
     color: var(--text);
-    text-decoration: none;
-    transition: border-color 0.2s, transform 0.15s;
+    font-variant-numeric: tabular-nums;
   }
-  .apk:hover { border-color: #3ddc84; transform: translateY(-1px); }
-  .apk svg { flex-shrink: 0; }
-  .apk-text { display: grid; font-weight: 800; font-size: 0.98rem; line-height: 1.15; flex: 1; }
-  .apk-text small { font-size: 0.68rem; font-weight: 700; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
-  .apk-dl { color: var(--muted); font-weight: 900; }
-  .apk-note { color: var(--muted); font-size: 0.88rem; }
-  .later { display: block; opacity: 0.75; font-size: 0.82rem; }
+  .count-day { color: var(--dim); font-size: 0.75rem; }
 
-  .visual { min-width: 0; }
-
-  @media (min-width: 560px) {
-    .primary { justify-items: start; }
-    .apk-row { grid-template-columns: auto 1fr; align-items: center; column-gap: 16px; }
-    .apk { min-width: 220px; }
-  }
-
-  @media (min-width: 960px) {
-    .grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 48px; }
-    h1 { font-size: clamp(4rem, 6.6vw, 6.2rem); }
+  @media (max-width: 760px) {
+    .inner { gap: 24px; padding-top: calc(104px + env(safe-area-inset-top)); padding-bottom: 40px; }
+    .ctas { width: 100%; flex-direction: column; }
+    .ctas .btn { width: 100%; padding-inline: 20px; }
+    .eyebrow { letter-spacing: 0.22em; }
+    .countdown { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+    .count-num { font-size: 2.125rem; }
   }
 </style>

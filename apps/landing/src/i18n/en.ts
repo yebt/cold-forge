@@ -1,214 +1,145 @@
 /**
  * Landing-page copy (English is the source of truth).
  * `es` and `pt` are typed as `LandingCopy`, so a missing or extra key is a type error.
- * Shared domain copy (rank names, habit names, milestone titles, tagline) comes from `@cold-forge/i18n`.
+ * Shared domain copy (rank names, milestone titles, day counts) comes from `@cold-forge/i18n`.
  *
- * Template placeholders like `{n}` are filled at runtime (some of them client-side).
+ * Template placeholders like `{n}` are filled with `fmt()` (the countdown ones client-side).
  */
 export const en = {
   meta: {
-    title: "COLD FORGE — Track your Winter Arc",
+    title: "COLD FORGE — While they hibernate, you forge",
     description:
-      "92 days. Oct 1 → Dec 31. Cold showers, gym, reading, early alarms. Check in with one tap, keep your streak alive and brag with story-ready cards.",
+      "The Winter Arc tracker. 92 days, Oct 1 → Dec 31: cold showers, training, reading, early alarms. One tap a day, streaks, ranks and story-ready cards. Free, no account, works offline.",
     ogLocale: "en_US",
   },
   a11y: {
     skip: "Skip to content",
     home: "COLD FORGE home",
-    language: "Language",
     mainNav: "Main",
-    phoneMock: "Preview of the COLD FORGE Today screen",
-    cardMock: "Example of a COLD FORGE story share card",
+    language: "Language",
+    forgeGrid: "A 92-day grid that turns from ice to ember",
+    storyCard: "Example of a story share card",
+    privacy: "Privacy",
   },
   nav: {
-    how: "How it works",
-    features: "Features",
-    ranks: "Ranks",
+    deal: "The deal",
+    arc: "The 92 days",
     faq: "FAQ",
-    cta: "Open the app",
+    cta: "Start your arc",
   },
   hero: {
-    eyebrow: "The Winter Arc tracker",
-    titleA: "Forge yourself",
-    titleB: "this winter.",
-    sub: "92 days of cold showers, heavy lifts, early alarms and pages read. COLD FORGE turns every check-in into heat — and every streak into something worth posting.",
-    openApp: "Open the web app",
-    openAppNote: "Installs like an app · works offline · no store needed",
+    eyebrow: "OCT 1 — DEC 31 · {days} DAYS",
+    titleA: "While they",
+    titleB: "hibernate,",
+    titleC: "you forge.",
+    sub: "92 days of cold, discipline and silence. Walk into January as someone else.",
+    start: "Start your Winter Arc",
     apk: "Download APK",
-    apkPlatform: "Android",
-    apkNote: "Prefer the web app? It’s the same app.",
-    storesLater: "App Store and Google Play: coming later.",
+    trust: "Free · no account · works offline",
     countdown: {
-      label: "Winter Arc",
-      fallback: "Oct 1 → Dec 31 · 92 days",
-      upcoming: "{n} days until the Winter Arc",
-      upcomingOne: "The Winter Arc starts tomorrow",
-      upcomingSub: "Starts Oct 1. Pick your habits now.",
-      active: "Day {day} of {total}",
-      activeSub: "{n} days left to forge. Join in any day.",
-      activeSubLast: "Final day. Finish strong.",
-      finished: "The arc is over. See you next winter.",
-      finishedSub: "{n} days until the next one.",
+      /** Rendered before JS runs (and if it never does). */
+      fallback: "days · Oct 1 to Dec 31",
+      toJan: "days until January 1",
+      toJanOne: "day until January 1",
+      day: "Day {day} of {total}",
+      toArc: "days until the Winter Arc",
+      toArcOne: "day until the Winter Arc",
+      toNext: "days until the next Winter Arc",
     },
   },
-  phone: {
-    today: "Today",
-    heat: "Forge heat",
-    done: "{done}/{total} done",
-    tap: "Tap to forge",
+  deal: {
+    kicker: "The deal",
+    lines: ["Cold water at 6 a.m.", "Lifting when no one’s watching.", "Pages, not screens.", "Zero excuses"],
+    end: "until December 31.",
+    body: "Nobody is coming to do it for you. COLD FORGE asks for one thing: show up every day and check it off. Consistency does the rest.",
   },
-  how: {
-    kicker: "How it works",
-    title: "Less planning. More forging.",
-    steps: [
+  phases: {
+    titleA: "Three months.",
+    titleB: "Three versions of you.",
+    sub: "The arc isn’t a straight line. First it hurts, then it’s routine, and by the end you’re someone else.",
+    range: "{month} · days {from}–{to}",
+    milestone: "Day {n} · {title}",
+    milestonesLabel: "Milestones",
+    items: [
       {
-        title: "Pick your habits in 60 seconds",
-        body: "Start from proven Winter Arc templates or write your own. No accounts, no setup maze.",
+        month: "October",
+        title: "The shock",
+        body: "The water burns, the alarm weighs a ton. This is where most people quit. Your goal: one full first week.",
       },
       {
-        title: "One tap a day",
-        body: "Open, tap, done. Sparks fly, your phone buzzes and the forge gets hotter.",
+        month: "November",
+        title: "The grind",
+        body: "You stop negotiating with yourself. The dark comes earlier, and you’re already moving.",
       },
       {
-        title: "Brag with story cards",
-        body: "Turn your day count, streak and rank into a 9:16 card ready for your stories.",
+        month: "December",
+        title: "The forge",
+        body: "While everyone promises “next year”, you already did it. You close the year with proof.",
       },
     ],
   },
-  features: {
-    kicker: "Features",
-    title: "Built for 92 days of grind.",
-    items: {
-      checkins: {
-        title: "One-tap check-ins",
-        body: "Sparks and haptics on every tap. Logging a habit takes less time than reading this.",
-      },
-      streaks: {
-        title: "Streaks & perfect days",
-        body: "Every habit keeps its own streak. Hit them all and the day counts as perfect.",
-      },
-      heatmap: {
-        title: "92-day heatmap",
-        body: "Your whole arc at a glance — watch the grid go from cold to white-hot.",
-      },
-      ranks: {
-        title: "Forge ranks",
-        body: "Climb from {from} to {to} by stacking perfect days.",
-      },
-      cards: {
-        title: "Story-ready share cards",
-        body: "Day count, streak, rank and heatmap in one clean 9:16 card.",
-      },
-      reminders: {
-        title: "Reminders",
-        body: "A nudge at the time you choose, so the streak never dies by accident.",
-      },
-      offline: {
-        title: "Offline-first",
-        body: "Works in airplane mode, in the gym basement, everywhere. No account needed — sign in with Google only if you want to sync.",
-      },
-      languages: {
-        title: "3 languages",
-        body: "English, Español and Português — switch any time.",
-      },
-    },
-  },
-  ranks: {
-    kicker: "Forge ranks",
-    title: "From raw ore to ice-forged.",
-    sub: "Ranks are earned with perfect days — days where you checked every single habit. No shortcuts.",
-    perfectDays: "{n} perfect days",
-    start: "Where everyone starts",
-  },
-  share: {
-    kicker: "Share cards",
-    title: "Proof, not promises.",
-    sub: "One tap turns your progress into a story-sized card. Post it, tag your crew, keep each other honest.",
-    points: [
-      "Sized 9:16 for Instagram, TikTok and WhatsApp stories",
-      "Special cards on milestone days",
-      "Your data, your call — nothing is posted for you",
+  forge: {
+    titleA: "From ice",
+    titleB: "to",
+    titleC: "ember.",
+    sub: "Every square is a day of your arc. They start cold. Every day you show up heats them. By December, your grid should be on fire.",
+    features: [
+      "Check off your habits in one tap",
+      "Per-habit streaks and perfect days",
+      "{count} ranks, from {from} to {to}",
+      "9:16 cards made for your stories",
     ],
-    cardArc: "Winter Arc",
-    streakDays: "{n} days",
   },
-  habits: {
-    kicker: "Habit ideas",
-    title: "Stack the habits that scare you.",
-    sub: "Start with a template or add your own. Most people forge 3 to 5.",
-    custom: "Your own habit",
+  proof: {
+    titleA: "Proof,",
+    titleB: "not promises.",
+    body: "Everyone says this is the year. You’re going to show it, day by day. One tap turns your progress into a story ready to post.",
+    note: "Illustrative example",
+    streak: "{days} streak",
   },
-  milestones: {
-    kicker: "Milestones",
-    title: "Checkpoints worth celebrating.",
-    sub: "Hit one and you unlock a special share card.",
-    day: "Day {n}",
+  privacy: {
+    items: [
+      { title: "No account", body: "Everything lives on your phone." },
+      { title: "Offline", body: "At the gym, on the subway, up the mountain." },
+      { title: "No ads", body: "Nothing pulls you off your path." },
+      { title: "Sync if you want", body: "With Google, across your devices." },
+    ],
   },
   faq: {
-    kicker: "FAQ",
-    title: "Questions, answered.",
+    title: "Questions",
     items: [
       {
         q: "What is the Winter Arc?",
-        a: "A 92-day self-improvement challenge from October 1 to December 31. While everyone else hibernates, you build habits: cold showers, training, reading, waking early — whatever makes you harder to break.",
-      },
-      {
-        q: "Is COLD FORGE free?",
-        a: "Yes. Tracking, streaks, ranks and share cards are free. If we ever add extras, the core tracker stays free.",
-      },
-      {
-        q: "How do I install it?",
-        a: "Open the web app. Android (Chrome): tap “Install app” or ⋮ → “Install app”. iPhone/iPad (Safari): tap Share → “Add to Home Screen”. Desktop (Chrome or Edge): click the install icon in the address bar. It then opens full screen from your home screen or dock, like any other app.",
-      },
-      {
-        q: "Web app or APK?",
-        a: "Same app, same features. The web app installs in seconds, updates itself and works on any phone or computer. The APK is the Android build from our GitHub releases — handy if you prefer a classic app file; Android will ask you to allow installs from your browser.",
-      },
-      {
-        q: "Do I need an account?",
-        a: "No. COLD FORGE works fully without an account (guest mode). Sign in with Google only if you want your arc synced across devices — you can do it any time, and your local progress comes with you.",
-      },
-      {
-        q: "What happens to my data?",
-        a: "Without an account, everything stays on your device and works offline. If you sign in, your habits and check-ins are stored in your private cloud space that only you can read. No ads, nothing sold, and share cards are only shared when you share them. You can export your data any time.",
+        a: "A 92-day challenge from October 1 to December 31: build discipline while the rest of the world slows down. You pick the habits — cold showers, training, reading, early alarms, whatever makes you harder to break.",
       },
       {
         q: "Can I start late?",
-        a: "Absolutely. Join the classic arc on any day, or start your own “my 92 days from today” arc whenever you’re ready.",
+        a: "Yes. Join the official arc on any day, or start your own 92 days from today.",
       },
       {
-        q: "Which languages does it support?",
-        a: "English, Spanish and Portuguese. It follows your device’s language and you can switch any time.",
+        q: "Do I need an account?",
+        a: "No. It works fully without signing up. Sign in with Google only if you want to sync across devices — your local progress comes with you.",
+      },
+      {
+        q: "How much does it cost?",
+        a: "Nothing. The web app and the Android APK are free, with no ads.",
+      },
+      {
+        q: "Web app or APK?",
+        a: "Same app, same features. The web app installs from your browser (Android: “Install app”; iPhone: Share → “Add to Home Screen”), updates itself and works offline. The APK is the Android build from our GitHub releases, if you prefer a classic app file.",
+      },
+      {
+        q: "What happens to my data?",
+        a: "Without an account, everything stays on your device. If you sign in, your habits and check-ins live in a private cloud space only you can read. Nothing is sold, and cards are only shared when you share them. You can export your data any time.",
       },
     ],
   },
-  install: {
-    kicker: "Get the app",
-    title: "Install in seconds. No store.",
-    sub: "COLD FORGE is a web app you can install: it opens full screen from your home screen, works offline and updates itself.",
-    open: "Open the web app",
-    apk: "Download APK (Android)",
-    apkNote: "Prefer the web app? It’s the same app.",
-    guest: "No account needed. Google sign-in is optional, only to sync between devices.",
-    platforms: [
-      {
-        name: "Android",
-        steps: ["Open the web app in Chrome.", "Tap “Install app” (or ⋮ → “Install app”).", "Find COLD FORGE on your home screen."],
-      },
-      {
-        name: "iPhone & iPad",
-        steps: ["Open the web app in Safari.", "Tap Share, then “Add to Home Screen”.", "Tap “Add” — done."],
-      },
-      {
-        name: "Desktop",
-        steps: ["Open the web app in Chrome or Edge.", "Click the install icon in the address bar.", "Launch it from your dock or start menu."],
-      },
-    ],
-  },
-  footer: {
-    line: "Made for the cold months.",
-    rights: "All rights reserved.",
-    top: "Back to top",
+  cta: {
+    kicker: "January 1 comes either way",
+    titleA: "Who will you be",
+    titleB: "when it does?",
+    start: "Start now — it’s free",
+    apk: "or download the APK for Android",
   },
 };
 

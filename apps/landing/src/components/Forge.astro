@@ -1,0 +1,98 @@
+---
+import { ARC_DAYS, FORGE_RANKS } from "@cold-forge/core";
+import { fmt, useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t, m } = useCopy(Astro.props.locale);
+
+const first = FORGE_RANKS[0];
+const last = FORGE_RANKS[FORGE_RANKS.length - 1];
+const features = t.forge.features.map((f) =>
+  fmt(f, {
+    count: FORGE_RANKS.length,
+    from: first ? m.ranks[first.id] : "",
+    to: last ? m.ranks[last.id] : "",
+  }),
+);
+
+// One cell per arc day: deep cold → ice → white-hot → ember → deep ember, as in the mockup.
+type RGB = [number, number, number];
+const COLD: RGB = [26, 44, 60];
+const ICE: RGB = [124, 196, 234];
+const WHITE: RGB = [238, 243, 247];
+const EMBER: RGB = [240, 138, 75];
+const DEEP: RGB = [196, 72, 28];
+const mix = (a: RGB, b: RGB, k: number) => a.map((v, i) => Math.round(v + (b[i]! - v) * k)).join(",");
+const cells = Array.from({ length: ARC_DAYS }, (_, i) => {
+  const k = i / (ARC_DAYS - 1);
+  const rgb =
+    k < 0.4 ? mix(COLD, ICE, k / 0.4)
+    : k < 0.6 ? mix(ICE, WHITE, (k - 0.4) / 0.2)
+    : k < 0.85 ? mix(WHITE, EMBER, (k - 0.6) / 0.25)
+    : mix(EMBER, DEEP, (k - 0.85) / 0.15);
+  return { rgb, hot: k > 0.85 };
+});
+---
+
+<section class="forge section" aria-labelledby="forge-title">
+  <div class="container grid">
+    <div class="copy">
+      <h2 id="forge-title" class="display h2">
+        <span>{t.forge.titleA}</span>
+        <span>{t.forge.titleB} <span class="ember">{t.forge.titleC}</span></span>
+      </h2>
+      <p class="lede">{t.forge.sub}</p>
+      <ul class="features">
+        {features.map((f) => <li>{f}</li>)}
+      </ul>
+    </div>
+    <div class="cells" role="img" aria-label={t.a11y.forgeGrid}>
+      {cells.map((c) => <span class={c.hot ? "hot" : undefined} style={`background:rgb(${c.rgb})`}></span>)}
+    </div>
+  </div>
+</section>
+
+<style>
+  .forge { background: var(--bg-2); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+    gap: clamp(48px, 6vw, 72px);
+    align-items: center;
+  }
+  .copy { display: flex; flex-direction: column; gap: 22px; }
+  .copy .h2 { font-size: clamp(2.75rem, 5.4vw, 4.75rem); }
+  .copy .h2 > span > .ember { display: inline; }
+  .features {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 1rem;
+    color: var(--text-2);
+  }
+  .features li {
+    display: flex;
+    gap: 12px;
+  }
+  .features li::before {
+    content: "";
+    flex: 0 0 14px;
+    height: 1px;
+    margin-top: 0.8em;
+    background: var(--dim);
+  }
+
+  .cells {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: clamp(4px, 0.8vw, 6px);
+  }
+  .cells span {
+    aspect-ratio: 1;
+    border-radius: clamp(2px, 0.5vw, 4px);
+  }
+  .cells .hot { box-shadow: 0 0 14px rgb(240 138 75 / 0.45); }
+</style>
