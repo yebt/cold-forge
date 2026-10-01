@@ -29,6 +29,6 @@ Guest mode never loads Firebase. Only signed-in users (Google) touch Auth/Firest
 
 | Project | Source | Domain |
 | --- | --- | --- |
-| landing | `apps/landing` (`dist`) | `<domain>` |
-| app (PWA) | `apps/app` (`dist`) | `app.<domain>` |
-| admin | `apps/admin` (`dist`) | `admin.<domain>` behind Cloudflare Access |
+| landing | `apps/landing` (`dist`) | `coldforge.work` |
+| app (PWA) | `apps/app` (`dist`) | `app.coldforge.work` |
+| admin | `apps/admin` (`dist`) | `admin.coldforge.work` behind Cloudflare Access |
