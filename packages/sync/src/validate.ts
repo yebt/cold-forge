@@ -1,4 +1,4 @@
-import { HABIT_TEMPLATES, isISODate } from "@cold-forge/core";
+import { HABIT_TEMPLATES, diffDays, isISODate, parseISODate } from "@cold-forge/core";
 import { isLocale } from "@cold-forge/i18n";
 import {
   SYNC_PROTOCOL_VERSION,
@@ -12,7 +12,13 @@ import {
   type VerifyRequest,
 } from "./types.ts";
 
-/** Hard limits. Anything over them is rejected, not truncated, so bad clients fail loudly. */
+/**
+ * Hard limits. Anything over them is rejected, not truncated, so bad clients fail loudly.
+ *
+ * Text lengths count UTF-16 code units (`string.length`), which is what Firestore rules'
+ * `string.size()` counts too, so the client and firebase/firestore.rules agree on every string
+ * (30 × "💪" = 60 units fits a name; 31 doesn't).
+ */
 export const LIMITS = {
   maxBodyBytes: 1_000_000,
   maxArcsPerRequest: 20,
@@ -28,12 +34,30 @@ export const LIMITS = {
   maxClockSkewMs: 5 * 60_000,
 } as const;
 
-/** Per-user storage caps enforced by the server (tombstones count). */
-export const QUOTAS = {
-  arcs: 50,
-  habits: 500,
-  checkIns: 50_000,
+/**
+ * Bounds on the key space and timestamps of what may be WRITTEN (firebase/firestore.rules enforces
+ * the same numbers). They cap how many distinct documents one account can create and stop
+ * nonsense dates (year 0001 or 9999) from ever reaching the server.
+ *
+ * - Every timestamp (createdAt, updatedAt, deletedAt) is >= `minTimestamp`, and createdAt <= updatedAt.
+ * - An arc starts on or after `minDate` and spans at most `maxArcDays` days (inclusive).
+ * - A check-in's date lies within [now - checkInPastDays, now + checkInFutureDays] (UTC midnight
+ *   of the date vs the server clock). Older check-ins (e.g. imported from an old export) stay on
+ *   the device and are simply never pushed: the outgoing pre-validator holds them back.
+ *
+ * They apply to writes only (`parseSyncRequest(..., { bounds: true })`, the default). Data read
+ * back from the server or from device storage is parsed with `bounds: false`: a check-in that was
+ * fine when written must not become "invalid" a year later.
+ */
+export const WRITE_BOUNDS = {
+  minDate: "2024-01-01",
+  minTimestamp: "2024-01-01T00:00:00.000Z",
+  maxArcDays: 366,
+  checkInPastDays: 400,
+  checkInFutureDays: 2,
 } as const;
+
+export { QUOTAS } from "./quotas.ts";
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -64,6 +88,15 @@ const COMBINING_RUN = /\p{M}{4,}/u;
 /** Must start with a pictograph, a regional indicator (flags) or be a keycap (1️⃣ #️⃣ *️⃣). */
 const EMOJI_START = /^\p{Extended_Pictographic}|^\p{Regional_Indicator}|^[0-9#*]\ufe0f?\u20e3/u;
 const MAX_EMOJI_GRAPHEMES = 2;
+/**
+ * Exactly the code points the Firestore rules accept in an emoji (explicit ranges, see
+ * firebase/firestore.rules `isEmoji`): emoji pictographs (incl. regional indicators and skin
+ * tones), keycaps, ZWJ, VS16 and subdivision-flag tag sequences. No ASCII letters, spaces or `<>`.
+ */
+const EMOJI_PICTO =
+  "\\u00a9\\u00ae\\u203c\\u2049\\u2122\\u2139\\u2194-\\u2199\\u21a9\\u21aa\\u231a\\u231b\\u2328\\u23cf\\u23e9-\\u23f3\\u23f8-\\u23fa\\u24c2\\u25aa\\u25ab\\u25b6\\u25c0\\u25fb-\\u25fe\\u2600-\\u27bf\\u2934\\u2935\\u2b05-\\u2b07\\u2b1b\\u2b1c\\u2b50\\u2b55\\u3030\\u303d\\u3297\\u3299\\u{1f000}-\\u{1faff}";
+const EMOJI_UNIT = `[${EMOJI_PICTO}]|[0-9#*]\\ufe0f?\\u20e3|\\u{1f3f4}[\\u{e0030}-\\u{e0039}\\u{e0061}-\\u{e007a}]{1,6}\\u{e007f}`;
+export const EMOJI_STRICT = new RegExp(`^(?:${EMOJI_UNIT})(?:${EMOJI_UNIT}|[\\u200d\\ufe0f])*$`, "u");
 /** Invisible or blank-rendering code points that must not make a "non-empty" value. */
 const INVISIBLE =
   /[\s\p{M}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\u3164\u115f\u1160\uffa0\u{e0000}-\u{e007f}]/gu;
@@ -75,19 +108,32 @@ const fail = (path: string, why: string): never => {
   throw new Invalid(`${path}: ${why}`);
 };
 
-/** True if the string renders as nothing (only whitespace, marks and invisible format characters). */
+/**
+ * True if the string renders as nothing (only whitespace, marks and invisible format characters).
+ * `\s` in JS covers every Unicode space separator (NBSP, U+3000, U+2000–U+200A…), like `\p{Z}` in the rules.
+ */
 export function isBlank(v: string): boolean {
   return v.replace(INVISIBLE, "").length === 0;
 }
 
-function text(v: unknown, path: string, max: number, { allowEmpty = true, multiline = false } = {}): string {
+/**
+ * `allowEmpty`: "" is accepted. A value that is not empty but renders as nothing (only spaces,
+ * NBSP, U+3000, invisibles…) is rejected unless `allowBlank` (free text like "why").
+ */
+function text(
+  v: unknown,
+  path: string,
+  max: number,
+  { allowEmpty = true, allowBlank = false, multiline = false } = {},
+): string {
   if (typeof v !== "string") return fail(path, "must be a string");
   // Lone surrogates cannot be stored as UTF-8 faithfully (SQLite/Buffer would mangle them).
   if (!v.isWellFormed()) return fail(path, "is not well-formed Unicode");
-  if ([...v].length > max) return fail(path, `longer than ${max} characters`);
+  // UTF-16 code units, like the Firestore rules' string.size().
+  if (v.length > max) return fail(path, `longer than ${max} characters`);
   if (UNSAFE_TEXT.test(v) || (!multiline && /[\n\t]/.test(v))) return fail(path, "contains control characters");
   if (COMBINING_RUN.test(v)) return fail(path, "contains too many combining marks");
-  if (!allowEmpty && isBlank(v)) return fail(path, "must not be empty");
+  if (v === "" ? !allowEmpty : !allowBlank && isBlank(v)) return fail(path, "must not be empty");
   return v;
 }
 
@@ -96,9 +142,9 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** A habit emoji: one or two emoji graphemes. ZWJ sequences, variation selectors, skin tones and flags are fine. */
 export function isEmoji(v: unknown): v is string {
   if (typeof v !== "string" || !v.isWellFormed() || v.length === 0) return false;
-  if ([...v].length > LIMITS.emojiLength) return false;
+  if (v.length > LIMITS.emojiLength) return false;
   if (UNSAFE_EMOJI.test(v) || TAG_CHAR.test(v.replace(TAG_FLAG, ""))) return false;
-  if (COMBINING_RUN.test(v) || !EMOJI_START.test(v)) return false;
+  if (COMBINING_RUN.test(v) || !EMOJI_START.test(v) || !EMOJI_STRICT.test(v)) return false;
   let count = 0;
   for (const _ of graphemes.segment(v)) if (++count > MAX_EMOJI_GRAPHEMES) return false;
   return true;
@@ -147,32 +193,68 @@ function optionalTimestamp(v: unknown, path: string, now: number): string | unde
   return v === undefined || v === null ? undefined : timestamp(v, path, now);
 }
 
+/** Options of `parseSyncRequest`. */
+export interface ParseOptions {
+  /** Enforce `WRITE_BOUNDS` (default true). Off for data read back from the server or storage. */
+  bounds?: boolean;
+}
+
+interface Ctx {
+  now: number;
+  bounds: boolean;
+}
+
+/** Is `date` inside the window the rules accept for a check-in written at `now`? */
+export function checkInDateWritable(date: string, now: number): boolean {
+  const t = parseISODate(date);
+  return t >= now - WRITE_BOUNDS.checkInPastDays * DAY_MS && t <= now + WRITE_BOUNDS.checkInFutureDays * DAY_MS;
+}
+
+const DAY_MS = 86_400_000;
+
+function bounded(ctx: Ctx, path: string, times: { createdAt?: string; updatedAt: string; deletedAt?: string }): void {
+  if (!ctx.bounds) return;
+  for (const k of ["createdAt", "updatedAt", "deletedAt"] as const) {
+    const t = times[k];
+    if (t !== undefined && t < WRITE_BOUNDS.minTimestamp) fail(`${path}.${k}`, "is too old");
+  }
+  if (times.createdAt !== undefined && times.createdAt > times.updatedAt) fail(`${path}.createdAt`, "is after updatedAt");
+}
+
 function list(v: unknown, path: string, max: number): unknown[] {
   if (!Array.isArray(v)) return fail(path, "must be an array");
   if (v.length > max) return fail(path, `more than ${max} items`);
   return v;
 }
 
-function arc(v: unknown, path: string, now: number): SyncArc {
+function arc(v: unknown, path: string, ctx: Ctx): SyncArc {
+  const { now } = ctx;
   if (!isObj(v)) return fail(path, "must be an object");
   const kind = v.kind === "winter" || v.kind === "custom" ? v.kind : fail(`${path}.kind`, "invalid");
   const startDate = date(v.startDate, `${path}.startDate`);
   const endDate = date(v.endDate, `${path}.endDate`);
   if (startDate > endDate) fail(path, "startDate after endDate");
+  if (ctx.bounds) {
+    if (startDate < WRITE_BOUNDS.minDate) fail(`${path}.startDate`, "is too old");
+    if (diffDays(startDate, endDate) + 1 > WRITE_BOUNDS.maxArcDays) fail(path, `longer than ${WRITE_BOUNDS.maxArcDays} days`);
+  }
   const deletedAt = optionalTimestamp(v.deletedAt, `${path}.deletedAt`, now);
-  return {
+  const out: SyncArc = {
     id: id(v.id, `${path}.id`),
     kind,
     startDate,
     endDate,
-    why: text(v.why, `${path}.why`, LIMITS.whyLength, { multiline: true }),
+    why: text(v.why, `${path}.why`, LIMITS.whyLength, { multiline: true, allowBlank: true }),
     createdAt: timestamp(v.createdAt, `${path}.createdAt`, now),
     updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`, now),
     ...(deletedAt ? { deletedAt } : {}),
   };
+  bounded(ctx, path, out);
+  return out;
 }
 
-function habit(v: unknown, path: string, now: number): SyncHabit {
+function habit(v: unknown, path: string, ctx: Ctx): SyncHabit {
+  const { now } = ctx;
   if (!isObj(v)) return fail(path, "must be an object");
   if (v.templateId !== undefined && v.templateId !== null && !TEMPLATE_IDS.has(v.templateId as string)) {
     fail(`${path}.templateId`, "unknown template");
@@ -181,7 +263,7 @@ function habit(v: unknown, path: string, now: number): SyncHabit {
     fail(`${path}.order`, "must be a small non-negative integer");
   }
   const deletedAt = optionalTimestamp(v.deletedAt, `${path}.deletedAt`, now);
-  return {
+  const out: SyncHabit = {
     id: id(v.id, `${path}.id`),
     arcId: id(v.arcId, `${path}.arcId`),
     ...(typeof v.templateId === "string" ? { templateId: v.templateId as SyncHabit["templateId"] & string } : {}),
@@ -192,41 +274,48 @@ function habit(v: unknown, path: string, now: number): SyncHabit {
     updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`, now),
     ...(deletedAt ? { deletedAt } : {}),
   };
+  bounded(ctx, path, out);
+  return out;
 }
 
-function checkIn(v: unknown, path: string, now: number): SyncCheckIn {
+function checkIn(v: unknown, path: string, ctx: Ctx): SyncCheckIn {
   if (!isObj(v)) return fail(path, "must be an object");
   if (typeof v.done !== "boolean") fail(`${path}.done`, "must be a boolean");
-  return {
+  const out: SyncCheckIn = {
     habitId: id(v.habitId, `${path}.habitId`),
     date: date(v.date, `${path}.date`),
     done: v.done as boolean,
-    updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`, now),
+    updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`, ctx.now),
   };
+  if (ctx.bounds && !checkInDateWritable(out.date, ctx.now)) fail(`${path}.date`, "is outside the writable window");
+  bounded(ctx, path, out);
+  return out;
 }
 
-function profile(v: unknown, path: string, now: number): SyncProfile | null {
+function profile(v: unknown, path: string, ctx: Ctx): SyncProfile | null {
   if (v === null || v === undefined) return null;
   if (!isObj(v)) return fail(path, "must be an object");
-  return {
+  const out: SyncProfile = {
     displayName: text(v.displayName, `${path}.displayName`, LIMITS.displayNameLength),
     locale: isLocale(v.locale) ? v.locale : fail(`${path}.locale`, "unsupported locale"),
     currentArcId: v.currentArcId === null ? null : id(v.currentArcId, `${path}.currentArcId`),
-    updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`, now),
+    updatedAt: timestamp(v.updatedAt, `${path}.updatedAt`, ctx.now),
   };
+  bounded(ctx, path, out);
+  return out;
 }
 
-function changes(v: unknown, path: string, now: number): SyncChanges {
+function changes(v: unknown, path: string, ctx: Ctx): SyncChanges {
   if (!isObj(v)) return fail(path, "must be an object");
   return {
-    arcs: list(v.arcs, `${path}.arcs`, LIMITS.maxArcsPerRequest).map((a, i) => arc(a, `${path}.arcs[${i}]`, now)),
+    arcs: list(v.arcs, `${path}.arcs`, LIMITS.maxArcsPerRequest).map((a, i) => arc(a, `${path}.arcs[${i}]`, ctx)),
     habits: list(v.habits, `${path}.habits`, LIMITS.maxHabitsPerRequest).map((h, i) =>
-      habit(h, `${path}.habits[${i}]`, now),
+      habit(h, `${path}.habits[${i}]`, ctx),
     ),
     checkIns: list(v.checkIns, `${path}.checkIns`, LIMITS.maxCheckInsPerRequest).map((c, i) =>
-      checkIn(c, `${path}.checkIns[${i}]`, now),
+      checkIn(c, `${path}.checkIns[${i}]`, ctx),
     ),
-    profile: profile(v.profile, `${path}.profile`, now),
+    profile: profile(v.profile, `${path}.profile`, ctx),
   };
 }
 
@@ -239,14 +328,18 @@ function guard<T>(fn: () => T): Result<T> {
   }
 }
 
-/** Strict validation of an untrusted sync body. Unknown fields are dropped. */
-export function parseSyncRequest(raw: unknown, now = Date.now()): Result<SyncRequest> {
+/**
+ * Strict validation of an untrusted sync body. Unknown fields are dropped. `bounds` (default on)
+ * adds the write-time `WRITE_BOUNDS`; turn it off only for data read back from the server/storage.
+ */
+export function parseSyncRequest(raw: unknown, now = Date.now(), opts: ParseOptions = {}): Result<SyncRequest> {
+  const ctx: Ctx = { now, bounds: opts.bounds ?? true };
   return guard(() => {
     if (!isObj(raw)) return fail("body", "must be an object");
     if (raw.protocol !== SYNC_PROTOCOL_VERSION) fail("protocol", `must be ${SYNC_PROTOCOL_VERSION}`);
     // text() also rejects lone surrogates and invisible characters in the cursor.
     const cursor = raw.cursor === null ? null : text(raw.cursor, "cursor", 64, { allowEmpty: false });
-    return { protocol: SYNC_PROTOCOL_VERSION, cursor, changes: changes(raw.changes, "changes", now) };
+    return { protocol: SYNC_PROTOCOL_VERSION, cursor, changes: changes(raw.changes, "changes", ctx) };
   });
 }
 

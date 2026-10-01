@@ -6,7 +6,7 @@ import { decideFirstSync, summarizeServerArc, type ArcSummary } from "./conflict
 import { collectDirty, isEmpty, markAcked, splitBatches } from "./dirty.ts";
 import { err, type SyncError, type SyncResult } from "./errors.ts";
 import { applyRemote, localRecords } from "./mapping.ts";
-import { prepareOutgoing } from "./outgoing.ts";
+import { knownParents, prepareOutgoing } from "./outgoing.ts";
 import { emptySyncState, forgetAccount, parseSyncState, serializeSyncState, type SyncState } from "./state.ts";
 import type { SyncPage, SyncTransport } from "./transport.ts";
 
@@ -19,6 +19,8 @@ export type SyncStatus =
   | "rateLimited"
   /** The backend refused our data even after a re-pull: paused, no retry loop ("contact support"). */
   | "rejected"
+  /** The account is blocked server-side (disabled/deleted/over quota): stopped, no retries. */
+  | "blocked"
   | "conflict";
 export type SyncNotice = "signedIn" | "sessionExpired" | "accountDeleted" | null;
 export type SyncReason = "start" | "resume" | "online" | "signin" | "manual" | "local" | "retry" | "remote";
@@ -129,6 +131,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   let debounceTimer: unknown = null;
   let failures = 0;
   let blockedUntil = 0;
+  /** The server refuses this account (blocked/{uid}): only a user action tries again. */
+  let accountBlocked = false;
   let lastSuccessAt = 0;
   let foreground = true;
   let unsubscribeLive: (() => void) | null = null;
@@ -210,6 +214,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     if (state.userId !== a.uid) state = { ...forgetAccount(state), userId: a.uid };
     failures = 0;
     blockedUntil = 0;
+    accountBlocked = false;
   }
 
   async function dropSession(notice: SyncNotice) {
@@ -220,6 +225,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     state = forgetAccount(state);
     failures = 0;
     blockedUntil = 0;
+    accountBlocked = false;
     clearTimer("retry");
     clearTimer("debounce");
     await Promise.all([storage.clearSession().catch(() => undefined), persistState()]);
@@ -243,10 +249,9 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     const all = localRecords(deps.getData(), state.history);
     const dirty = collectDirty(all, state.acked);
     if (isEmpty(dirty)) return dirty;
-    const out = prepareOutgoing(dirty, now(), {
-      arcIds: new Set(all.arcs.map((a) => a.id)),
-      habitIds: new Set(all.habits.map((h) => h.id)),
-    });
+    const out = prepareOutgoing(dirty, now(), knownParents(all));
+    // Check-ins of deleted habits can never be written (the rules refuse them): settle them.
+    if (out.obsolete.length) markAcked(state.acked, { ...emptyChanges(), checkIns: out.obsolete });
     if (warn && (out.skipped > 0 || out.repaired > 0)) {
       // Counts only: never record contents (they are personal data).
       console.warn(`[sync] outgoing records: ${out.repaired} repaired, ${out.skipped} held back`);
@@ -264,7 +269,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   }
 
   function startLive() {
-    if (unsubscribeLive || !foreground || !account || !transport?.subscribe || state.cursor === null || state.conflict) return;
+    if (accountBlocked || unsubscribeLive || !foreground || !account || !transport?.subscribe || state.cursor === null || state.conflict) return;
     const t = transport;
     const gen = generation;
     unsubscribeLive = t.subscribe!(
@@ -283,10 +288,19 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
         if (gen !== generation) return;
         stopLive();
         if (!e.ok && e.error.kind === "unauthorized") void dropSession("sessionExpired");
+        else if (!e.ok && e.error.kind === "blocked") markBlocked();
         else scheduleRetry(BACKOFF_BASE_MS); // re-attaches after the next successful sync
       },
     );
     emit({ live: true });
+  }
+
+  function markBlocked() {
+    accountBlocked = true;
+    stopLive();
+    clearTimer("retry");
+    clearTimer("debounce");
+    emit({ ...baseSnapshot(), status: "blocked" });
   }
 
   // ---- One sync run ----
@@ -401,6 +415,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
 
     if (outcome.ok) {
       failures = 0;
+      accountBlocked = false;
       lastSuccessAt = now();
       state.lastSyncedAt = nowISO();
       await persistState();
@@ -415,6 +430,9 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     switch (error.kind) {
       case "unauthorized":
         await dropSession("sessionExpired");
+        return;
+      case "blocked":
+        markBlocked();
         return;
       case "rejected":
         // Still refused after a re-pull and one retry: don't loop. "Sync now" or the next edit retries.
@@ -436,6 +454,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   async function requestSync(reason: SyncReason): Promise<void> {
     if (disposed || !account) return;
     if (now() < blockedUntil) return; // even a manual sync waits for the backend's back-off
+    // A blocked account is only retried when the user asks ("Sync now" / signing in again).
+    if (accountBlocked && reason !== "manual" && reason !== "signin") return;
     if (reason === "resume" && now() - lastSuccessAt < RESUME_THROTTLE_MS) return;
     if (running) {
       // Single flight: remember to go again once the current run ends.
@@ -462,7 +482,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
   }
 
   function notifyLocalChange() {
-    if (disposed || !account || state.conflict) return;
+    if (disposed || !account || state.conflict || accountBlocked) return;
     clearTimer("debounce");
     debounceTimer = timers.set(() => {
       debounceTimer = null;

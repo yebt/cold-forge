@@ -42,6 +42,31 @@ describe("input-time checks match the API", () => {
     for (const bad of ["", "a", "🔥🔥🔥", "x🔥", "​🔥"]) expect(checkEmoji(bad)).toBe(false);
   });
 
+  test("L1: lengths are UTF-16 units, like the Firestore rules (string.size()) and <input maxLength>", () => {
+    expect(checkField("name", "💪".repeat(30))).toBeNull(); // 60 units
+    expect(checkField("name", "💪".repeat(31))).toBe("tooLong"); // 62 units, 31 code points
+    expect(checkField("displayName", "🔥".repeat(20))).toBeNull();
+    expect(checkField("displayName", "🔥".repeat(21))).toBe("tooLong");
+    expect(checkField("why", "😀".repeat(140))).toBeNull();
+    expect(checkField("why", "😀".repeat(141))).toBe("tooLong");
+    // Repairs cut whole characters, never half a surrogate pair or a ZWJ sequence.
+    expect(repairText("name", "a" + "💪".repeat(40))).toBe("a" + "💪".repeat(29));
+    expect(repairText("name", "x".repeat(57) + "👍🏽")).toBe("x".repeat(57)); // 👍🏽 is 4 units: dropped whole
+    expect(checkEmoji("👨‍👩‍👧‍👦👨‍👩‍👧‍👦")).toBe(false); // two graphemes but 22 units > 16
+  });
+
+  test("names and display names made only of space separators are blank (C4–C6, C34)", () => {
+    for (const b of ["\u00a0\u00a0", "\u3000", "\u2000\u2001", "\u202f"]) {
+      expect(checkField("name", b)).toBe("blank");
+      expect(serverAcceptsText("displayName", b)).toBe(false);
+      expect(repairText("displayName", b)).toBe("");
+    }
+  });
+
+  test("the emoji picker only offers emoji the rules' strict regex accepts", () => {
+    for (const bad of ["🔥 hello world!!", "🔥<img src=x>", "©abcdefghijklmno"]) expect(checkEmoji(bad)).toBe(false);
+  });
+
   test("every picker choice and template emoji is accepted by the API", () => {
     expect(EMOJI_CHOICES.length).toBeGreaterThanOrEqual(40);
     expect(EMOJI_CHOICES.filter((e) => !isEmoji(e))).toEqual([]);

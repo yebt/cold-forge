@@ -127,7 +127,7 @@ export const copy = {
 
   audit: {
     title: "Audit log",
-    subtitle: "Every admin mutation, newest first. Written only by Cloud Functions.",
+    subtitle: "Every admin mutation (including refused attempts) and every single-account view, newest first. Written only by Cloud Functions.",
     when: "When",
     actor: "Actor",
     action: "Action",
@@ -137,6 +137,7 @@ export const copy = {
     empty: "No admin actions recorded yet.",
     loadMore: "Load more",
     actions: {
+      "user.view": "Viewed",
       "user.disable": "Disabled",
       "user.enable": "Enabled",
       "user.delete": "Deleted",
@@ -146,6 +147,7 @@ export const copy = {
     },
     ok: "ok",
     error: "failed",
+    refused: "refused",
   },
 
   toasts: {
@@ -160,6 +162,7 @@ export const copy = {
     generic: "Something went wrong. Try again.",
     retry: "Retry",
     rateLimited: "Too many requests. Wait a minute.",
+    notConfigured: "Admin access isn't configured on the server: set the ADMIN_ALLOWED_EMAILS secret (see apps/functions/README.md).",
     byCode: {
       "invalid-argument": "Invalid input.",
       "not-found": "That user no longer exists.",

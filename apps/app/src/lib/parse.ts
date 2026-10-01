@@ -14,7 +14,6 @@ import {
   type StoredArc,
   type StoredHabit,
 } from "./model.ts";
-import { codePointLength } from "./text.ts";
 
 /**
  * Strict validation of AppData coming from outside the running app (device storage or an
@@ -57,7 +56,7 @@ const MAX: Record<TextField, number> = { name: TEXT_LIMITS.name, why: TEXT_LIMIT
 
 function text(v: unknown, path: string, field: TextField, ctx: Ctx): string {
   if (typeof v !== "string") return fail(path, "must be a string");
-  if (ctx.mode === "import" && codePointLength(v) > MAX[field]) return fail(path, `longer than ${MAX[field]} characters`);
+  if (ctx.mode === "import" && v.length > MAX[field]) return fail(path, `longer than ${MAX[field]} characters`);
   if (v.length > 10_000) return fail(path, "far too long");
   const fixed = repairText(field, v);
   if (fixed !== v) ctx.repaired = true;

@@ -21,21 +21,31 @@ const UNSAFE_TEXT_G = new RegExp(UNSAFE_TEXT.source, "gu");
 /** Runs of 4+ combining marks ("zalgo") are rejected by the API; keep at most 3. */
 const COMBINING_RUN_G = /(\p{M}{3})\p{M}+/gu;
 
-/** Length in code points (what the sync API limits), not UTF-16 units. */
-export function codePointLength(value: string): number {
-  let n = 0;
-  for (const _ of value) n++;
-  return n;
+/**
+ * Cuts `value` to at most `max` UTF-16 code units (what the sync API and the Firestore rules'
+ * `string.size()` limit, and what `<input maxLength>` counts) without splitting a character:
+ * whole user-perceived characters (graphemes) are kept or dropped together.
+ */
+export function truncateUnits(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const Seg = (Intl as unknown as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  const parts = Seg ? Array.from(new Seg(undefined, { granularity: "grapheme" }).segment(value), (s) => s.segment) : Array.from(value);
+  let out = "";
+  for (const p of parts) {
+    if (out.length + p.length > max) break;
+    out += p;
+  }
+  return out;
 }
 
 /**
  * Normalizes user-typed text before it is stored: replaces lone surrogates, strips invisible /
  * control / bidi characters, trims zalgo stacks, collapses line breaks unless `multiline`, trims,
- * and caps the length in code points.
+ * and caps the length in UTF-16 units.
  */
 export function cleanText(value: string, max: number, multiline = false): string {
   let v = value.toWellFormed().replace(UNSAFE_TEXT_G, "").replace(COMBINING_RUN_G, "$1");
   if (!multiline) v = v.replace(/[\t\n]+/g, " ");
   v = v.trim();
-  return codePointLength(v) > max ? Array.from(v).slice(0, max).join("").trim() : v;
+  return v.length > max ? truncateUnits(v, max).trim() : v;
 }

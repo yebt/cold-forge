@@ -45,7 +45,7 @@ export function firestorePort(db: Firestore): FirestorePort {
       const batch = writeBatch(db);
       for (const op of ops) {
         const ref = doc(db, op.path);
-        if (op.kind === "delete") batch.delete(ref);
+        if (op.kind === "delete") batch.delete(ref); // refused by the rules; kept for the port's contract
         else batch.set(ref, { ...op.data, syncedAt: serverTimestamp() }, { merge: op.merge === true });
       }
       await batch.commit();
@@ -57,10 +57,6 @@ export function firestorePort(db: Firestore): FirestorePort {
     async get(path) {
       const d = await getDocFromServer(doc(db, path));
       return d.exists() ? toDoc(d) : null;
-    },
-    async listIds(path) {
-      const snap = await getDocsFromServer(query(collection(db, path)));
-      return snap.docs.map((d) => d.id);
     },
     listenAfter(path, after, onDocs, onError) {
       return onSnapshot(

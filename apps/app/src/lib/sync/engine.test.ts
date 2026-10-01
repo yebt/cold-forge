@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { setCheckIn, updateSettings, type AppData } from "../model.ts";
+import { deleteHabit, setCheckIn, updateSettings, type AppData } from "../model.ts";
 import type { AccountInfo, SyncBackend } from "./backend.ts";
 import { createSyncEngine, type SyncStorage, type Timers } from "./engine.ts";
 import { err, ok } from "./errors.ts";
 import { checkInDocId, createFirestoreTransport } from "./firestoreTransport.ts";
 import { toSyncChanges } from "./mapping.ts";
 import { createMemoryFirestore, type MemoryFirestore } from "./memoryFirestore.ts";
-import { T1, T2, TODAY, makeData } from "./testkit.ts";
+import { T1, T2, T3, TODAY, makeData } from "./testkit.ts";
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 const USER: AccountInfo = { uid: "u1", email: "yahir@gmail.com" };
@@ -71,10 +71,12 @@ function setup(opts: SetupOptions = {}) {
     restore: async () => ok(sdkUser),
     signIn: async () => ok((sdkUser = USER)),
     signOut: async () => void (sdkUser = null),
-    deleteAccount: async () =>
-      opts.deleteCancelled
-        ? err({ kind: "cancelled" })
-        : (backend.transport(USER.uid) as ReturnType<typeof createFirestoreTransport>).deleteEverything(),
+    // Like the real backend: re-auth, then user.delete(); onUserDeleted erases users/{uid} server-side.
+    deleteAccount: async () => {
+      if (opts.deleteCancelled) return err({ kind: "cancelled" });
+      fs.deleteUserData(USER.uid);
+      return ok(undefined);
+    },
     onSignedOut: (cb) => {
       signedOut.add(cb);
       return () => signedOut.delete(cb);
@@ -421,8 +423,55 @@ describe("realtime", () => {
   });
 });
 
+describe("tombstoned parents", () => {
+  test("check in, then delete the habit before syncing: the tombstone syncs, the orphan check-in is settled", async () => {
+    const s = setup({ live: false });
+    await s.signIn();
+    const hid = s.data!.habits[0]!.id;
+    s.data = setCheckIn(s.data!, hid, TODAY, true, T2);
+    s.data = deleteHabit(s.data!, hid, T3);
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot().status).toBe("idle");
+    const docs = s.fs.docs();
+    expect(docs.get(`users/${USER.uid}/habits/${hid}`)?.deletedAt).toBe(T3);
+    expect(docs.has(`users/${USER.uid}/checkIns/${checkInDocId({ habitId: hid, date: TODAY })}`)).toBe(false);
+    const commits = s.fs.stats.commits;
+    s.engine.notifyLocalChange();
+    await s.timers.runAll();
+    await s.engine.requestSync("local");
+    expect(s.fs.stats.commits).toBe(commits); // nothing left to push
+  });
+});
+
+describe("blocked accounts", () => {
+  test("a blocked account (reads refused) stops syncing with 'blocked', no retry loop", async () => {
+    const s = setup();
+    await s.signIn();
+    expect(s.engine.getSnapshot().status).toBe("idle");
+    s.fs.setBlocked(USER.uid, true);
+    s.data = setCheckIn(s.data!, s.data!.habits[0]!.id, TODAY, true, T3);
+    s.engine.notifyLocalChange();
+    await s.timers.runAll();
+    await tick(20);
+    expect(s.engine.getSnapshot()).toMatchObject({ status: "blocked", live: false });
+    const reads = s.fs.stats.reads;
+    // Further edits, resumes and timers don't hammer the server.
+    s.data = setCheckIn(s.data!, s.data!.habits[1]!.id, TODAY, true, T3);
+    s.engine.notifyLocalChange();
+    await s.engine.requestSync("resume");
+    await s.engine.requestSync("retry");
+    await s.timers.runAll();
+    expect(s.timers.pending.size).toBe(0);
+    expect(s.fs.stats.reads).toBe(reads);
+    // A manual "Sync now" tries again; once unblocked it recovers.
+    s.fs.setBlocked(USER.uid, false);
+    await s.engine.requestSync("manual");
+    expect(s.engine.getSnapshot().status).toBe("idle");
+  });
+});
+
 describe("account", () => {
-  test("delete removes every server document; local data stays", async () => {
+  test("delete: re-auth + user.delete(); the server erases the data (onUserDeleted); local data stays", async () => {
     const s = setup();
     await s.signIn();
     expect(paths(s.fs).length).toBeGreaterThan(0);

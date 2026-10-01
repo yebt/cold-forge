@@ -29,6 +29,12 @@ Generated into `index.html` at build time from the Firebase config (`vite.config
 | `img-src` | `'self' data: https://lh3.googleusercontent.com` | Google avatars |
 | `object-src` / `base-uri` / `form-action` / `worker-src` | `'none'` | |
 
+With `VITE_APPCHECK_SITE_KEY` set (App Check on, off by default), the build also allows the
+reCAPTCHA Enterprise script/iframes (`www.google.com/recaptcha/`, `www.gstatic.com/recaptcha/`,
+`recaptcha.google.com/recaptcha/`) and the token exchange (`content-firebaseappcheck.googleapis.com`,
+`recaptchaenterprise.googleapis.com`), and initializes App Check before any callable; only then set
+`ADMIN_ENFORCE_APP_CHECK=true` in `apps/functions`. Without the key none of that is in the bundle or CSP.
+
 `connect-src` deliberately names exact hosts instead of `*.googleapis.com` / `*.run.app`, so
 injected code can't exfiltrate to arbitrary Google endpoints. The popup itself is a separate window
 at `<authDomain>/__/auth/handler` (not governed by this page's CSP). `public/_headers` adds

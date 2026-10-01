@@ -2,12 +2,15 @@ import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
-import { defineBoolean, defineString } from "firebase-functions/params";
+import { defineBoolean, defineSecret, defineString } from "firebase-functions/params";
 import * as functionsV1 from "firebase-functions/v1";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { HttpsError, onCall, type CallableOptions, type CallableRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { AdminError } from "./errors.ts";
-import { createAuthPort, createDataPort } from "./firebase.ts";
+import { createAuthPort, createDataPort, createQuotaPort } from "./firebase.ts";
 import { parseEmailList, type AuthContext } from "./guard.ts";
+import { handleUserDeleted, onRecordCreated, recountCheckIns, sweepDeletedUsers, type CountedKind } from "./quota.ts";
 import { createAdminService, type AdminService } from "./service.ts";
 import { isUid } from "./validate.ts";
 
@@ -27,20 +30,43 @@ const ENFORCE_APP_CHECK = defineBoolean("ADMIN_ENFORCE_APP_CHECK", {
   default: false,
   description: "Reject callable requests without a valid App Check token (requires App Check in apps/admin).",
 });
-const ALLOWED_EMAILS = defineString("ADMIN_ALLOWED_EMAILS", {
-  default: "",
-  description: "Optional comma-separated allowlist of admin emails, enforced on top of the admin claim.",
+/**
+ * The owner's email must not be committed to this public repo, so the allowlist is a Secret
+ * Manager secret (deployed, never in git): `firebase functions:secrets:set ADMIN_ALLOWED_EMAILS`.
+ * Empty (or missing) in production = every admin call is refused, unless ADMIN_ALLOW_ANY_ADMIN.
+ */
+const ALLOWED_EMAILS = defineSecret("ADMIN_ALLOWED_EMAILS");
+const ALLOW_ANY_ADMIN = defineBoolean("ADMIN_ALLOW_ANY_ADMIN", {
+  default: false,
+  description: "true = any verified Google account with the admin claim may use admin powers (no email allowlist). Not recommended.",
 });
+/** The Functions emulator (local tests) has no Secret Manager: there an empty allowlist means "any admin". */
+const IN_EMULATOR = process.env.FUNCTIONS_EMULATOR === "true";
 
 initializeApp();
 
+function readAllowlist(): string[] {
+  try {
+    return parseEmailList(ALLOWED_EMAILS.value());
+  } catch {
+    return []; // secret not bound / not set: fail closed below
+  }
+}
+
 let service: AdminService | undefined;
 function getService(): AdminService {
-  service ??= createAdminService({
-    auth: createAuthPort(getAuth()),
-    data: createDataPort(getFirestore()),
-    config: { allowedEmails: parseEmailList(ALLOWED_EMAILS.value()) },
-  });
+  if (!service) {
+    const allowedEmails = readAllowlist();
+    const allowAnyAdmin = ALLOW_ANY_ADMIN.value() || IN_EMULATOR;
+    if (allowedEmails.length === 0 && !allowAnyAdmin) {
+      logger.error("ADMIN_ALLOWED_EMAILS is empty: every admin call is refused (set the secret, see apps/functions/README.md)");
+    }
+    service = createAdminService({
+      auth: createAuthPort(getAuth()),
+      data: createDataPort(getFirestore()),
+      config: { allowedEmails, allowAnyAdmin },
+    });
+  }
   return service;
 }
 
@@ -48,6 +74,7 @@ const callableOptions: CallableOptions = {
   region: REGION,
   cors: ADMIN_ORIGIN,
   enforceAppCheck: ENFORCE_APP_CHECK,
+  secrets: [ALLOWED_EMAILS],
   // Small caps: admin traffic is tiny, and this bounds cost if someone hammers the endpoints.
   maxInstances: 3,
   concurrency: 20,
@@ -95,7 +122,10 @@ export const adminListAuditLog = adminCallable("listAuditLog", (s, a, d) => s.li
 
 /**
  * Data never outlives an account, however the account is deleted (admin panel, the user's own
- * "delete account", or the Firebase console). 2nd gen has no Auth onDelete trigger, so this one
+ * "delete account" in the app, or the Firebase console). It first writes blocked/{uid}, so the
+ * rules refuse the uid at once even though its ID token stays valid for up to an hour, then
+ * deletes users/{uid} recursively. The block stays (a uid is never reused) and schedules a second
+ * erase an hour later (sweepDeletedUsers). 2nd gen has no Auth onDelete trigger, so this one
  * stays on the v1 API.
  */
 export const onUserDeleted = functionsV1
@@ -107,6 +137,39 @@ export const onUserDeleted = functionsV1
       logger.error("onUserDeleted: unexpected uid format, skipping");
       return;
     }
-    await createDataPort(getFirestore()).deleteUserData(user.uid);
-    logger.info("user data deleted", { uid: user.uid });
+    await handleUserDeleted(createQuotaPort(getFirestore()), user.uid);
+    logger.info("user blocked and data deleted", { uid: user.uid });
   });
+
+// ---------- Quotas (per-user document caps; QUOTAS in @cold-forge/sync) ----------
+
+const triggerOptions = { region: REGION, memory: "256MiB" as const, maxInstances: 10, timeoutSeconds: 60 };
+
+function countCreate(kind: CountedKind) {
+  return onDocumentCreated({ ...triggerOptions, document: `users/{uid}/${kind}/{id}` }, async (event) => {
+    const uid = event.params.uid;
+    if (!isUid(uid)) return;
+    await onRecordCreated(createQuotaPort(getFirestore()), uid, kind, new Date(), logger);
+  });
+}
+
+/** quota/{uid}.arcs += 1 per new arc; over QUOTAS.arcs → blocked/{uid} {reason: "quota"}. */
+export const quotaOnArcCreated = countCreate("arcs");
+/** quota/{uid}.habits += 1 per new habit; over QUOTAS.habits → blocked. */
+export const quotaOnHabitCreated = countCreate("habits");
+
+/** Daily: recount check-ins (count() aggregation) of recently active accounts; block over QUOTAS.checkIns. */
+export const quotaRecountCheckIns = onSchedule(
+  { schedule: "17 3 * * *", timeZone: "Etc/UTC", region: REGION, memory: "256MiB", timeoutSeconds: 540, maxInstances: 1, retryCount: 1 },
+  async () => {
+    await recountCheckIns(createQuotaPort(getFirestore()), new Date(), logger);
+  },
+);
+
+/** Hourly: second erase of accounts deleted more than an hour ago (blocked/{uid}.sweepAfter). */
+export const sweepDeletedAccounts = onSchedule(
+  { schedule: "every 60 minutes", region: REGION, memory: "256MiB", timeoutSeconds: 300, maxInstances: 1 },
+  async () => {
+    await sweepDeletedUsers(createQuotaPort(getFirestore()), new Date(), logger);
+  },
+);

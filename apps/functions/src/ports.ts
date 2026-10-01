@@ -53,20 +53,27 @@ export interface ProfileView {
 }
 
 export type AuditAction =
+  | "user.view"
   | "user.disable"
   | "user.enable"
   | "user.delete"
   | "admin.grant"
   | "admin.revoke";
 
+/** `refused`: a deliberate refusal (see `code`), before anything was changed. */
+export type AuditOutcome = "ok" | "error" | "refused";
+
 export interface AuditRecord {
   actorUid: string;
   actorEmail: string;
   action: AuditAction;
+  /** "" when the target is unknown (e.g. a rate-limited call). */
   targetUid: string;
   targetEmail: string | null;
   reason: string | null;
-  outcome: "ok" | "error";
+  outcome: AuditOutcome;
+  /** Refusal reason code (`self-action`, `target-is-admin`, …) for `refused`; otherwise null. */
+  code: string | null;
 }
 
 export interface AuditEntry extends Omit<AuditRecord, "action"> {
@@ -87,7 +94,18 @@ export interface RateRule {
   windowMs: number;
 }
 
+/**
+ * Why `blocked/{uid}` exists. The Firestore rules refuse every read and write of a blocked uid.
+ * Precedence when several apply: deleted > quota > disabled (a weaker reason never replaces a
+ * stronger one, and re-enabling an account only lifts a `disabled` block).
+ */
+export type BlockReason = "disabled" | "quota" | "deleted";
+
 export interface DataPort {
+  /** Writes `blocked/{uid}` (keeping a stronger existing reason). */
+  setBlocked(uid: string, reason: BlockReason): Promise<void>;
+  /** Removes `blocked/{uid}` only if its reason is `disabled`; returns the reason still in force, or null. */
+  unblockDisabled(uid: string): Promise<BlockReason | null>;
   countUserData(uid: string): Promise<UserCounts>;
   getProfile(uid: string): Promise<ProfileView | null>;
   /** Recursively deletes `users/{uid}` and everything under it. */

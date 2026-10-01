@@ -44,7 +44,9 @@ export function parseChanges(raw: unknown, now: number): Result<SyncChanges> {
   if (arcs.length + habits.length + checkIns.length > MAX_RECORDS) return { ok: false, error: "changes: too many records" };
   const out: SyncChanges = emptyChanges();
   const check = (changes: Record<string, unknown>): Result<SyncChanges> => {
-    const r = parseSyncRequest({ protocol: SYNC_PROTOCOL_VERSION, cursor: null, changes }, now);
+    // Data read back (server responses, device storage): no write-time bounds, so a check-in that
+    // was fine when written doesn't turn "invalid" once it is older than the write window.
+    const r = parseSyncRequest({ protocol: SYNC_PROTOCOL_VERSION, cursor: null, changes }, now, { bounds: false });
     return r.ok ? { ok: true, value: r.value.changes } : r;
   };
   const steps: [unknown[], number, keyof Omit<SyncChanges, "profile">][] = [

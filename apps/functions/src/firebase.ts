@@ -1,7 +1,8 @@
 import type { Auth, UserRecord } from "firebase-admin/auth";
-import { FieldValue, Timestamp, type DocumentData, type Firestore, type Query } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, type DocumentData, type Firestore, type Query, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { AdminError } from "./errors.ts";
-import type { AuditEntry, AuditRecord, AuthPort, AuthUser, DataPort, ProfileView, UserCounts } from "./ports.ts";
+import type { AuditEntry, AuditRecord, AuthPort, AuthUser, BlockReason, DataPort, ProfileView, UserCounts } from "./ports.ts";
+import { QUOTA_JOB, type QuotaPort, type QuotaRow } from "./quota.ts";
 import { consumeWindow, type WindowState } from "./rateLimit.ts";
 import { isUid } from "./validate.ts";
 
@@ -9,6 +10,32 @@ import { isUid } from "./validate.ts";
 
 export const AUDIT_COLLECTION = "adminAuditLog";
 export const RATE_LIMIT_COLLECTION = "adminRateLimits";
+/** `blocked/{uid}`: {reason, at, sweepAfter?}. Read by the Firestore rules (exists()). */
+export const BLOCKED_COLLECTION = "blocked";
+/** `quota/{uid}`: {arcs, habits, checkIns, checkInsCountedAt, updatedAt}. */
+export const QUOTA_COLLECTION = "quota";
+
+const BLOCK_RANK: Record<BlockReason, number> = { disabled: 1, quota: 2, deleted: 3 };
+const isBlockReason = (v: unknown): v is BlockReason => v === "disabled" || v === "quota" || v === "deleted";
+
+/**
+ * Writes blocked/{uid} unless a stronger reason is already there. A `deleted` block carries
+ * `sweepAfter` for the delayed second erase (sweepDeletedUsers).
+ */
+async function writeBlock(db: Firestore, uid: string, reason: BlockReason): Promise<void> {
+  const ref = db.collection(BLOCKED_COLLECTION).doc(uid);
+  await db.runTransaction(async (tx) => {
+    const current = (await tx.get(ref)).get("reason");
+    if (isBlockReason(current) && BLOCK_RANK[current] >= BLOCK_RANK[reason]) {
+      if (current !== "deleted" || reason !== "deleted") return;
+    }
+    tx.set(ref, {
+      reason,
+      at: FieldValue.serverTimestamp(),
+      ...(reason === "deleted" ? { sweepAfter: Timestamp.fromMillis(Date.now() + QUOTA_JOB.sweepDelayMs) } : {}),
+    });
+  });
+}
 
 function iso(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -117,7 +144,7 @@ export function toProfileView(doc: DocumentData): ProfileView {
   };
 }
 
-const AUDIT_ACTIONS = new Set(["user.disable", "user.enable", "user.delete", "admin.grant", "admin.revoke"]);
+const AUDIT_ACTIONS = new Set(["user.view", "user.disable", "user.enable", "user.delete", "admin.grant", "admin.revoke"]);
 
 export function toAuditEntry(id: string, doc: DocumentData): AuditEntry {
   return {
@@ -128,7 +155,8 @@ export function toAuditEntry(id: string, doc: DocumentData): AuditEntry {
     targetUid: str(doc.targetUid, 128) ?? "",
     targetEmail: str(doc.targetEmail, 320),
     reason: str(doc.reason, 500),
-    outcome: doc.outcome === "error" ? "error" : "ok",
+    outcome: doc.outcome === "error" || doc.outcome === "refused" ? doc.outcome : "ok",
+    code: str(doc.code, 64),
     at: timeValue(doc.at),
   };
 }
@@ -138,6 +166,20 @@ export function createDataPort(db: Firestore): DataPort {
   const count = async (q: Query) => (await q.count().get()).data().count;
 
   return {
+    async setBlocked(uid, reason) {
+      await writeBlock(db, safeUid(uid), reason);
+    },
+    async unblockDisabled(uid) {
+      const ref = db.collection(BLOCKED_COLLECTION).doc(safeUid(uid));
+      return db.runTransaction(async (tx) => {
+        const reason = (await tx.get(ref)).get("reason");
+        if (reason === "disabled") {
+          tx.delete(ref);
+          return null;
+        }
+        return isBlockReason(reason) ? reason : null;
+      });
+    },
     async countUserData(uid): Promise<UserCounts> {
       const ref = userDoc(uid);
       const [arcs, habits, checkIns] = await Promise.all([
@@ -199,6 +241,49 @@ export function createDataPort(db: Firestore): DataPort {
         }
         return allowed;
       });
+    },
+  };
+}
+
+/** firebase-admin adapter for the quota jobs and triggers. */
+export function createQuotaPort(db: Firestore): QuotaPort {
+  const quota = db.collection(QUOTA_COLLECTION);
+  const rows = (docs: QueryDocumentSnapshot[]): QuotaRow[] =>
+    docs
+      .filter((d) => isUid(d.id))
+      .map((d) => ({ uid: d.id, checkIns: typeof d.get("checkIns") === "number" ? (d.get("checkIns") as number) : null }));
+  return {
+    async increment(uid, kind, now) {
+      const ref = quota.doc(safeUid(uid));
+      await ref.set({ [kind]: FieldValue.increment(1), updatedAt: Timestamp.fromDate(now) }, { merge: true });
+      const value = (await ref.get()).get(kind);
+      return typeof value === "number" ? value : 0;
+    },
+    async setBlocked(uid, reason) {
+      await writeBlock(db, safeUid(uid), reason);
+    },
+    async listActive(since, limit) {
+      return rows((await quota.where("updatedAt", ">=", Timestamp.fromDate(since)).limit(limit).get()).docs);
+    },
+    async listStale(before, limit) {
+      const snap = await quota.where("checkInsCountedAt", "<", Timestamp.fromDate(before)).orderBy("checkInsCountedAt").limit(limit).get();
+      return rows(snap.docs);
+    },
+    async countCheckIns(uid) {
+      return (await db.collection("users").doc(safeUid(uid)).collection("checkIns").count().get()).data().count;
+    },
+    async saveCheckIns(uid, count, now) {
+      await quota.doc(safeUid(uid)).set({ checkIns: count, checkInsCountedAt: Timestamp.fromDate(now) }, { merge: true });
+    },
+    async listDueSweeps(now, limit) {
+      const snap = await db.collection(BLOCKED_COLLECTION).where("sweepAfter", "<=", Timestamp.fromDate(now)).limit(limit).get();
+      return snap.docs.map((d) => d.id).filter(isUid);
+    },
+    async deleteUserData(uid) {
+      await db.recursiveDelete(db.collection("users").doc(safeUid(uid)));
+    },
+    async markSwept(uid) {
+      await db.collection(BLOCKED_COLLECTION).doc(safeUid(uid)).update({ sweepAfter: FieldValue.delete() });
     },
   };
 }

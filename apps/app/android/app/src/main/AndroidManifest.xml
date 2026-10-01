@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      No backups and no device-to-device transfer of app data: it holds the habit history and the
+      Firebase session (IndexedDB/WebView storage), which must not land in a Google Drive backup or
+      on another phone. allowBackup="false" covers Android <= 11; for apps targeting 12+ device
+      transfer ignores it, so dataExtractionRules (API 31+) and fullBackupContent (API 23-30)
+      exclude every domain explicitly. This file is committed and `cap sync` never rewrites it.
+    -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

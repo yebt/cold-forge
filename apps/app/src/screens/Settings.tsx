@@ -2,6 +2,7 @@ import { LOCALES, LOCALE_NAMES } from "@cold-forge/i18n";
 import { useEffect, useState, type FormEvent } from "react";
 import { habitName } from "../lib/derive.ts";
 import {
+  TEXT_LIMITS,
   activeHabits,
   addHabit,
   deleteHabit,
@@ -231,7 +232,7 @@ export function Settings() {
             placeholder={s.addHabit}
             aria-label={ui.onboarding.customName}
             aria-invalid={newName !== "" && newNameProblem !== null}
-            maxLength={60}
+            maxLength={TEXT_LIMITS.name}
           />
           <button type="submit" className="btn secondary" disabled={!newName.trim()}>
             {ui.common.add}
@@ -333,7 +334,7 @@ function EditHabitRow(props: {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          maxLength={60}
+          maxLength={TEXT_LIMITS.name}
           aria-invalid={problem !== null}
           autoFocus
         />

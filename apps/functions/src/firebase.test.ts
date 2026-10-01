@@ -62,3 +62,9 @@ test("toAuditEntry is defensive about stored data", () => {
   expect(e.outcome).toBe("ok");
   expect(e.at).toBe("1970-01-01T00:00:00.000Z");
 });
+
+test("toAuditEntry keeps refusals and their code (L5)", () => {
+  const e = toAuditEntry("id2", { actorUid: "a", action: "user.view", outcome: "refused", code: "rate-limited", at: Timestamp.fromMillis(0) });
+  expect([e.action, e.outcome, e.code]).toEqual(["user.view", "refused", "rate-limited"]);
+  expect(toAuditEntry("id3", { action: "user.delete", outcome: "ok" }).code).toBeNull();
+});

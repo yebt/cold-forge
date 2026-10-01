@@ -4,9 +4,10 @@
   "type": "module",
   "description": "Firestore security rules tests. Run against the emulator: bun run test:rules",
   "scripts": {
-    "test:rules": "bunx firebase-tools@latest emulators:exec --only firestore --project demo-coldforge \"bun test ./rules.test.ts\""
+    "test:rules": "bunx firebase-tools@15.32.1 emulators:exec --only firestore --project demo-coldforge \"bun test ./rules.test.ts\""
   },
   "devDependencies": {
+    "@cold-forge/sync": "workspace:*",
     "@firebase/rules-unit-testing": "^5.0.0",
     "firebase": "^12.19.0"
   },

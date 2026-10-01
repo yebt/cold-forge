@@ -74,6 +74,7 @@ function seedAudit(users: UserRowDto[]): AuditEntryDto[] {
     targetEmail: pick(i).email,
     reason,
     outcome,
+    code: null,
     at: new Date(NOW - daysAgo * DAY).toISOString(),
   }));
 }
@@ -98,7 +99,7 @@ export function createMockBackend(): Backend {
   };
   const find = (uid: string) => users.find((u) => u.uid === uid) ?? fail("not-found", "User not found.");
   const log = (action: AuditEntryDto["action"], target: UserRowDto, reason: string | null) => {
-    audit = [{ id: `audit${Date.now()}`.padEnd(20, "0").slice(0, 20), actorUid: ME.uid, actorEmail: ME.email, action, targetUid: target.uid, targetEmail: target.email, reason, outcome: "ok", at: new Date().toISOString() }, ...audit];
+    audit = [{ id: `audit${Date.now()}`.padEnd(20, "0").slice(0, 20), actorUid: ME.uid, actorEmail: ME.email, action, targetUid: target.uid, targetEmail: target.email, reason, outcome: "ok", code: null, at: new Date().toISOString() }, ...audit];
   };
   const recent = () => {
     if (params.get("mock") === "stale" || Date.now() - authTime > 30 * 60_000) {

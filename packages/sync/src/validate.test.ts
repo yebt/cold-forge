@@ -1,7 +1,7 @@
 /** Regression tests for the security review: M2 (emails), L2 (surrogates), L3 (invisibles/emoji), timestamps. */
 import { describe, expect, test } from "bun:test";
 import { HABIT_TEMPLATES } from "@cold-forge/core";
-import { canonicalTimestamp, isBlank, isEmoji, normalizeEmail, parseSyncRequest } from "./index.ts";
+import { LIMITS, WRITE_BOUNDS, canonicalTimestamp, checkInDateWritable, isBlank, isEmoji, normalizeEmail, parseSyncRequest } from "./index.ts";
 
 const NOW = Date.parse("2026-10-05T12:00:00Z");
 const ARC = "11111111-1111-4111-8111-111111111111";
@@ -204,5 +204,63 @@ describe("L3: invisible and spoofing characters", () => {
       expect([t.emoji, isEmoji(t.emoji)]).toEqual([t.emoji, true]);
       expect(parse({ habits: [habit({ templateId: t.id, name: "", emoji: t.emoji })] }).ok).toBe(true);
     }
+  });
+});
+
+describe("H1: write bounds (mirror of firebase/firestore.rules)", () => {
+  const checkIn = (date: string, o: Record<string, unknown> = {}) => ({ habitId: HABIT, date, done: true, updatedAt: TS, ...o });
+  const DAY = 86_400_000;
+  const day = (offset: number) => new Date(NOW + offset * DAY).toISOString().slice(0, 10);
+
+  test("check-in dates within [now - 400 d, now + 2 d]", () => {
+    for (const d of ["9999-12-31", "0001-01-01", "1900-01-01", day(-402), day(3)]) expect([d, parse({ checkIns: [checkIn(d)] }).ok]).toEqual([d, false]);
+    for (const d of [day(-399), day(0), day(1)]) expect([d, parse({ checkIns: [checkIn(d)] }).ok]).toEqual([d, true]);
+    expect(checkInDateWritable(day(-399), NOW)).toBe(true);
+    expect(checkInDateWritable(day(-401), NOW)).toBe(false);
+  });
+
+  test("arcs start on/after 2024-01-01 and span at most 366 days", () => {
+    expect(parse({ arcs: [arc({ startDate: "0001-01-01", endDate: "9999-12-31" })] }).ok).toBe(false);
+    expect(parse({ arcs: [arc({ startDate: "2023-12-31", endDate: "2024-01-31" })] }).ok).toBe(false);
+    expect(parse({ arcs: [arc({ startDate: "2024-01-01", endDate: "2024-12-31" })] }).ok).toBe(true); // 366 days
+    expect(parse({ arcs: [arc({ startDate: "2026-01-01", endDate: "2027-01-02" })] }).ok).toBe(false); // 367
+  });
+
+  test("timestamps from 2024 on, createdAt <= updatedAt", () => {
+    expect(parse({ arcs: [arc({ createdAt: "2023-12-31T23:59:59.999Z" })] }).ok).toBe(false);
+    expect(parse({ checkIns: [checkIn(day(0), { updatedAt: "0001-01-01T00:00:00.000Z" })] }).ok).toBe(false);
+    expect(parse({ habits: [habit({ createdAt: "2026-10-02T00:00:00.000Z", updatedAt: TS })] }).ok).toBe(false);
+    expect(parse({ arcs: [arc({ deletedAt: "2023-01-01T00:00:00.000Z" })] }).ok).toBe(false);
+  });
+
+  test("data read back (bounds: false) is not subject to the write window", () => {
+    const old = { protocol: 1, cursor: null, changes: { arcs: [], habits: [], checkIns: [checkIn("2024-02-01")], profile: null } };
+    expect(parseSyncRequest(old, NOW).ok).toBe(false);
+    expect(parseSyncRequest(old, NOW, { bounds: false }).ok).toBe(true);
+    expect(WRITE_BOUNDS).toEqual({ minDate: "2024-01-01", minTimestamp: "2024-01-01T00:00:00.000Z", maxArcDays: 366, checkInPastDays: 400, checkInFutureDays: 2 });
+  });
+});
+
+describe("L1: lengths are UTF-16 code units (like the rules' string.size())", () => {
+  test("30 × 💪 is a valid name, 31 is not; the emoji field holds at most 16 units", () => {
+    expect(parse({ habits: [habit({ name: "💪".repeat(30) })] }).ok).toBe(true);
+    expect(parse({ habits: [habit({ name: "💪".repeat(31) })] }).ok).toBe(false);
+    expect(parse({ arcs: [arc({ why: "😀".repeat(140) })] }).ok).toBe(true);
+    expect(parse({ arcs: [arc({ why: "😀".repeat(141) })] }).ok).toBe(false);
+    expect(isEmoji("👨‍👩‍👧‍👦👨‍👩‍👧‍👦")).toBe(false); // 22 units
+    expect(LIMITS).toMatchObject({ nameLength: 60, whyLength: 280, displayNameLength: 40, emojiLength: 16 });
+  });
+
+  test("names and display names of only space separators are blank (NBSP, U+3000, U+2000…)", () => {
+    for (const b of ["  ", "　", "  ", " "]) {
+      expect(parse({ habits: [habit({ name: b })] }).ok).toBe(false);
+      expect(parse({ habits: [habit({ name: b, templateId: "gym" })] }).ok).toBe(false);
+      expect(parse({ profile: { displayName: b, locale: "en", currentArcId: null, updatedAt: TS } }).ok).toBe(false);
+    }
+    expect(parse({ profile: { displayName: "", locale: "en", currentArcId: null, updatedAt: TS } }).ok).toBe(true);
+  });
+
+  test("emoji: strict code points, no text after the emoji", () => {
+    for (const bad of ["🔥 hello world!!", "🔥<img src=x>", "©abcdefghijklmno", "⠀"]) expect([bad, isEmoji(bad)]).toEqual([bad, false]);
   });
 });

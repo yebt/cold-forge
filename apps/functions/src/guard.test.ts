@@ -3,7 +3,7 @@ import { AdminError } from "./errors.ts";
 import { assertLiveAdmin, parseEmailList, refuseSelf, requireAdmin, requireRecentLogin, type GuardConfig } from "./guard.ts";
 import { adminCtx, NOW, nowSec, user } from "./testing/fakes.ts";
 
-const config: GuardConfig = { allowedEmails: [], requireGoogleProvider: true };
+const config: GuardConfig = { allowedEmails: [], allowAnyAdmin: true, requireGoogleProvider: true };
 const alice = user("alice", { admin: true });
 
 function code(fn: () => unknown): string | undefined {
@@ -46,7 +46,23 @@ describe("requireAdmin", () => {
     expect(requireAdmin(ctx, { ...config, requireGoogleProvider: false }).uid).toBe("alice");
   });
 
-  test("enforces the optional email allowlist case-insensitively", () => {
+  test("L6: an empty allowlist fails closed unless ADMIN_ALLOW_ANY_ADMIN is explicit", () => {
+    const closed = { ...config, allowAnyAdmin: false };
+    let err: unknown;
+    try {
+      requireAdmin(adminCtx(alice), closed);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(AdminError);
+    expect((err as AdminError).code).toBe("permission-denied");
+    expect((err as AdminError).reason).toBe("allowlist-not-configured");
+    expect(requireAdmin(adminCtx(alice), { ...closed, allowedEmails: ["alice@example.com"] }).uid).toBe("alice");
+    // Non-admins still get the plain refusal (no hint about the configuration).
+    expect(code(() => requireAdmin(adminCtx(alice, { admin: false }), closed))).toBe("permission-denied");
+  });
+
+  test("enforces the email allowlist case-insensitively (even with allowAnyAdmin)", () => {
     const allow = { ...config, allowedEmails: ["alice@example.com"] };
     expect(requireAdmin(adminCtx(alice, { email: "Alice@Example.com" }), allow).email).toBe("alice@example.com");
     expect(code(() => requireAdmin(adminCtx(alice, { email: "mallory@example.com" }), allow))).toBe("permission-denied");

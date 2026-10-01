@@ -15,8 +15,13 @@ export interface AuthContext {
 }
 
 export interface GuardConfig {
-  /** Lower-cased emails allowed to act as admin. Empty = any verified admin claim holder. */
+  /**
+   * Lower-cased emails allowed to act as admin, on top of the claim. Empty = every admin call is
+   * refused (fail closed) unless `allowAnyAdmin`.
+   */
   allowedEmails: readonly string[];
+  /** Explicit opt-out of the allowlist (ADMIN_ALLOW_ANY_ADMIN=true, or the emulator). */
+  allowAnyAdmin: boolean;
   /** Require the session to come from Google sign-in (default true). */
   requireGoogleProvider: boolean;
 }
@@ -45,7 +50,12 @@ export function requireAdmin(auth: AuthContext | undefined | null, config: Guard
     throw new AdminError("permission-denied", "Not authorized.");
   }
   const email = token.email.toLowerCase();
-  if (config.allowedEmails.length > 0 && !config.allowedEmails.includes(email)) {
+  if (config.allowedEmails.length === 0) {
+    // Fail closed: a deploy that forgot the allowlist must not hand admin powers to every claim holder.
+    if (!config.allowAnyAdmin) {
+      throw new AdminError("permission-denied", "Admin access is not configured.", "allowlist-not-configured");
+    }
+  } else if (!config.allowedEmails.includes(email)) {
     throw new AdminError("permission-denied", "Not authorized.");
   }
   const authTime = typeof token.auth_time === "number" && Number.isFinite(token.auth_time) ? token.auth_time : 0;

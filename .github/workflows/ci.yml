@@ -60,5 +60,5 @@ jobs:
 
       - name: Rules + emulator tests
         run: >-
-          bunx firebase-tools@15 emulators:exec --only auth,firestore --project demo-coldforge
+          bunx firebase-tools@15.32.1 emulators:exec --only auth,firestore --project demo-coldforge
           "bun test firebase/rules.test.ts apps/app/src/firebase/emulator.test.ts"

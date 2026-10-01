@@ -91,7 +91,7 @@ export interface StatsResponse {
   generatedAt: string;
 }
 
-export type AuditActionDto = "user.disable" | "user.enable" | "user.delete" | "admin.grant" | "admin.revoke" | "unknown";
+export type AuditActionDto = "user.view" | "user.disable" | "user.enable" | "user.delete" | "admin.grant" | "admin.revoke" | "unknown";
 
 export interface AuditEntryDto {
   id: string;
@@ -101,7 +101,10 @@ export interface AuditEntryDto {
   targetUid: string;
   targetEmail: string | null;
   reason: string | null;
-  outcome: "ok" | "error";
+  /** `refused`: a deliberate refusal, nothing changed; `code` says why. */
+  outcome: "ok" | "error" | "refused";
+  /** Refusal code (self-action, target-is-admin, confirm-mismatch, recent-login-required, rate-limited). */
+  code: string | null;
   at: string | null;
 }
 
@@ -136,5 +139,6 @@ export interface AdminErrorDetails {
     | "target-is-admin"
     | "confirm-mismatch"
     | "session-revoked"
-    | "rate-limited";
+    | "rate-limited"
+    | "allowlist-not-configured";
 }

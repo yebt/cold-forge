@@ -108,6 +108,8 @@ function statusText(sync: SyncSnapshot, a: ReturnType<typeof useApp>["t"]["ui"][
       return a.rateLimited;
     case "rejected":
       return a.rejected;
+    case "blocked":
+      return a.blocked;
     case "conflict":
       return a.conflictStatus;
     default:
@@ -122,13 +124,26 @@ function SignedIn({ sync }: { sync: SyncSnapshot }) {
   const a = t.ui.account;
   const now = useNow(30_000);
   const [step, setStep] = useState<DeleteStep>(null);
+  const [confirmErase, setConfirmErase] = useState(false);
   const [eraseLocal, setEraseLocal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ago = sync.lastSyncedAt ? formatAgo(sync.lastSyncedAt, now, t.locale, a.justNow) : null;
   const tone = sync.status === "idle" || sync.status === "syncing" ? "ok" : sync.status === "offline" ? "muted" : "warn";
 
-  /** Google re-auth (popup), then every server doc, then the account. Local data stays unless chosen. */
+  /** Shared devices: sign out, then erase everything this device stores (data, history, reminders). */
+  const onSignOutErase = async () => {
+    setBusy(true);
+    await syncEngine.signOut();
+    await reset();
+    setBusy(false);
+    setConfirmErase(false);
+  };
+
+  /**
+   * Google re-auth (popup), then the account itself; the server erases the synced data within a
+   * few minutes (onUserDeleted). Local data stays unless chosen.
+   */
   const onDelete = async () => {
     setBusy(true);
     setError(null);
@@ -170,6 +185,9 @@ function SignedIn({ sync }: { sync: SyncSnapshot }) {
         {a.signOut}
       </button>
       <p className="muted small center">{a.signOutNote}</p>
+      <button className="btn ghost block" onClick={() => setConfirmErase(true)}>
+        {a.signOutErase}
+      </button>
       {error && (
         <p className="note warn" role="alert">
           {error}
@@ -179,6 +197,19 @@ function SignedIn({ sync }: { sync: SyncSnapshot }) {
         {a.deleteAccount}
       </button>
 
+      {confirmErase && (
+        <Modal title={a.signOutEraseTitle} onClose={() => !busy && setConfirmErase(false)} closeLabel={t.ui.common.close}>
+          <p className="modal-text">{a.signOutEraseBody}</p>
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setConfirmErase(false)} disabled={busy}>
+              {t.ui.common.cancel}
+            </button>
+            <button className="btn danger" onClick={() => void onSignOutErase()} disabled={busy}>
+              {a.signOutEraseYes}
+            </button>
+          </div>
+        </Modal>
+      )}
       {step === "first" && (
         <Modal title={a.deleteTitle} onClose={() => setStep(null)} closeLabel={t.ui.common.close}>
           <p className="modal-text">{a.deleteBody}</p>

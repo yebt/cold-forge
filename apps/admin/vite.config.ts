@@ -15,6 +15,8 @@ interface CspInput {
   projectId: string;
   region: string;
   emulators: boolean;
+  /** App Check (reCAPTCHA Enterprise) enabled via VITE_APPCHECK_SITE_KEY: allow its hosts. */
+  appCheck: boolean;
 }
 
 function readEnv(env: Record<string, string>, strict: boolean): CspInput {
@@ -22,6 +24,8 @@ function readEnv(env: Record<string, string>, strict: boolean): CspInput {
   const projectId = env.VITE_FIREBASE_PROJECT_ID ?? "";
   const region = env.VITE_FUNCTIONS_REGION || "us-central1";
   const emulators = env.VITE_USE_EMULATORS === "1";
+  const appCheckKey = env.VITE_APPCHECK_SITE_KEY ?? "";
+  if (appCheckKey && !/^[A-Za-z0-9_-]{20,100}$/.test(appCheckKey)) throw new Error(`VITE_APPCHECK_SITE_KEY looks wrong: ${appCheckKey}`);
   if (strict) {
     const missing = [
       "VITE_FIREBASE_API_KEY",
@@ -34,7 +38,7 @@ function readEnv(env: Record<string, string>, strict: boolean): CspInput {
     if (!PROJECT_RE.test(projectId)) throw new Error(`VITE_FIREBASE_PROJECT_ID looks wrong: ${projectId}`);
     if (!REGION_RE.test(region)) throw new Error(`VITE_FUNCTIONS_REGION looks wrong: ${region}`);
   }
-  return { authDomain, projectId, region, emulators };
+  return { authDomain, projectId, region, emulators, appCheck: appCheckKey !== "" };
 }
 
 /**
@@ -47,6 +51,9 @@ function readEnv(env: Record<string, string>, strict: boolean): CspInput {
  *   callables at `https://<region>-<project>.cloudfunctions.net`. Narrower than `*.googleapis.com`
  *   on purpose: a wildcard there would let injected code exfiltrate to any Google API (e.g. a GCS bucket).
  * - img-src lh3.googleusercontent.com: Google profile photos.
+ * - Only with App Check (VITE_APPCHECK_SITE_KEY): reCAPTCHA Enterprise script/iframes
+ *   (www.google.com/recaptcha/, www.gstatic.com/recaptcha/, recaptcha.google.com/recaptcha/) and the
+ *   token exchange (content-firebaseappcheck.googleapis.com, recaptchaenterprise.googleapis.com).
  *
  * The dev server needs inline scripts/styles (React Fast Refresh, Vite CSS) and a websocket for HMR;
  * those relaxations never reach a build. `frame-ancestors` can't be set from <meta>: see public/_headers.
@@ -65,19 +72,26 @@ function contentSecurityPolicy(input: CspInput): Plugin {
         const authFrame = input.authDomain ? `https://${input.authDomain}` : "";
         const emu = input.emulators ? ["http://127.0.0.1:9099", "http://127.0.0.1:5001", "http://localhost:9099", "http://localhost:5001"] : [];
         const join = (...parts: string[]) => parts.filter(Boolean).join(" ");
+        const ac = input.appCheck;
+        const recaptchaScript = ac ? "https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/" : "";
+        const recaptchaFrame = ac ? "https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/" : "";
+        const appCheckConnect = ac
+          ? "https://content-firebaseappcheck.googleapis.com https://recaptchaenterprise.googleapis.com https://www.google.com/recaptcha/"
+          : "";
         const directives = [
           "default-src 'self'",
-          join("script-src 'self' https://apis.google.com", dev ? "'unsafe-inline'" : ""),
+          join("script-src 'self' https://apis.google.com", recaptchaScript, dev ? "'unsafe-inline'" : ""),
           join("style-src 'self'", dev ? "'unsafe-inline'" : ""),
           "img-src 'self' data: https://lh3.googleusercontent.com",
           "font-src 'self'",
           join(
             "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com",
             functionsOrigin,
+            appCheckConnect,
             ...emu,
             dev ? "ws: wss:" : "",
           ),
-          join("frame-src", authFrame || "'none'", ...emu.filter((e) => e.endsWith(":9099"))),
+          join("frame-src", authFrame || "'none'", recaptchaFrame, ...emu.filter((e) => e.endsWith(":9099"))),
           "worker-src 'none'",
           "manifest-src 'self'",
           "object-src 'none'",

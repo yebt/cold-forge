@@ -26,7 +26,6 @@ export function firebaseConfig(): FirebaseWebConfig | null {
   return c.apiKey && c.authDomain && c.projectId && c.appId ? c : null;
 }
 
-export const USE_EMULATORS = env.VITE_USE_EMULATORS === "1";
 /** Mock backend for UI tests; `import.meta.env` is replaced at build time, so this is dead code in production. */
 export const USE_MOCK = env.VITE_FIREBASE_MOCK === "1";
 

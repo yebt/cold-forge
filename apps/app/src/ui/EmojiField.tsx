@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { checkEmoji } from "../lib/fields.ts";
+import { TEXT_LIMITS } from "../lib/model.ts";
 
 /** Curated fitness / discipline emojis (all pass the API's `isEmoji`; see fields.test.ts). */
 export const EMOJI_CHOICES = [
@@ -71,7 +72,7 @@ export function EmojiField({ value, onChange, labels }: Props) {
             placeholder={labels.type}
             aria-label={labels.type}
             aria-invalid={invalid}
-            maxLength={16}
+            maxLength={TEXT_LIMITS.emoji}
             onChange={(e) => {
               const v = e.target.value;
               setTyped(v);

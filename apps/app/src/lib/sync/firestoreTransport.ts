@@ -51,7 +51,6 @@ export interface FirestorePort {
   /** Docs ordered by (syncedAt, doc id), strictly after `after`, from the server (not the cache). */
   queryAfter(collectionPath: string, after: Position | null, limit: number): Promise<PortDoc[]>;
   get(docPath: string): Promise<PortDoc | null>;
-  listIds(collectionPath: string): Promise<string[]>;
   /** Realtime version of `queryAfter`: called with docs added/changed since attaching. */
   listenAfter(collectionPath: string, after: Position | null, onDocs: (docs: PortDoc[]) => void, onError: (e: unknown) => void): () => void;
   listenDoc(docPath: string, onDoc: (doc: PortDoc | null) => void, onError: (e: unknown) => void): () => void;
@@ -129,9 +128,20 @@ export function maxCursor(a: string | null, b: string): string {
 
 // ---- Errors ----
 
+const errorCode = (e: unknown) => (typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "");
+
+/**
+ * Errors of reads (pull, realtime). The rules always let a signed-in owner read their own data,
+ * so a read refused with permission-denied means the account is blocked (blocked/{uid}: disabled
+ * by an admin, deleted, or over quota). Writes refused with permission-denied are usually a
+ * rule rejecting data (`rejected`); the engine's re-pull then tells the two apart.
+ */
+export function mapReadError(e: unknown): SyncError {
+  return errorCode(e) === "permission-denied" ? { kind: "blocked" } : mapFirestoreError(e);
+}
+
 export function mapFirestoreError(e: unknown): SyncError {
-  const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
-  switch (code) {
+  switch (errorCode(e)) {
     case "permission-denied":
       return { kind: "rejected" };
     case "unauthenticated":
@@ -173,7 +183,8 @@ function toRecord<T>(kind: RecordKind, doc: PortDoc, now: number): T | null {
   const keys = kind === "arcs" ? ARC_KEYS : kind === "habits" ? HABIT_KEYS : kind === "checkIns" ? CHECKIN_KEYS : PROFILE_KEYS;
   const raw = pick(doc.data, keys);
   if (kind === "profile" && !("currentArcId" in raw)) raw.currentArcId = null;
-  const rec = checkRecord<T>(kind, raw as T, Math.max(now, timeMs(doc.syncedAt)));
+  // No write-time bounds here: a check-in written a year ago is still a valid record to read.
+  const rec = checkRecord<T>(kind, raw as T, Math.max(now, timeMs(doc.syncedAt)), { bounds: false });
   if (!rec) return null;
   // The doc id must be the record id (rules enforce it; a mismatch is not ours to trust).
   if (kind === "arcs" || kind === "habits") return (rec as unknown as { id: string }).id === doc.id ? rec : null;
@@ -188,10 +199,12 @@ export interface FirestoreTransportOptions {
   onInvalidDocs?: (count: number) => void;
 }
 
-export interface FirestoreTransport extends SyncTransport {
-  /** Account deletion: removes every document of the user (subcollections first, then the profile). */
-  deleteEverything(): Promise<SyncResult<void>>;
-}
+/**
+ * Clients never delete documents (the rules refuse it): deletions are tombstones, and account
+ * deletion is `user.delete()` in Firebase Auth, after which the onUserDeleted function blocks the
+ * uid and removes `users/{uid}` recursively.
+ */
+export type FirestoreTransport = SyncTransport;
 
 export function createFirestoreTransport(port: FirestorePort, uid: string, opts: FirestoreTransportOptions = {}): FirestoreTransport {
   const now = opts.now ?? Date.now;
@@ -253,7 +266,7 @@ export function createFirestoreTransport(port: FirestorePort, uid: string, opts:
         report(invalid);
         return ok({ cursor: encodeCursor(cursor), changes, hasMore: lists.some((l) => l.length >= pageSize) });
       } catch (e) {
-        return err(mapFirestoreError(e));
+        return err(mapReadError(e));
       }
     },
 
@@ -270,7 +283,11 @@ export function createFirestoreTransport(port: FirestorePort, uid: string, opts:
           currentArcId: p.currentArcId,
           updatedAt: p.updatedAt,
         };
-        if (profileExists !== true) data.createdAt = new Date(now()).toISOString();
+        if (profileExists !== true) {
+          // A new profile: the rules need createdAt <= updatedAt (and keep createdAt forever).
+          const nowIso = new Date(now()).toISOString();
+          data.createdAt = p.updatedAt < nowIso ? p.updatedAt : nowIso;
+        }
         ops.push({ kind: "set", path: userPath, data, merge: true });
       }
       if (ops.length === 0) return ok(undefined);
@@ -294,27 +311,12 @@ export function createFirestoreTransport(port: FirestorePort, uid: string, opts:
           onPage({ cursor: encodeCursor(cursor), changes, hasMore: false });
         }
       };
-      const fail = (e: unknown) => onError(err(mapFirestoreError(e)));
+      const fail = (e: unknown) => onError(err(mapReadError(e)));
       const unsubs = COLLS.map((c) =>
         port.listenAfter(coll(c), cursor[c], (docs) => emit((changes) => absorb(cursor, c, docs, changes)), fail),
       );
       unsubs.push(port.listenDoc(userPath, (doc) => emit((changes) => absorbProfile(cursor, doc, changes)), fail));
       return () => unsubs.forEach((u) => u());
-    },
-
-    async deleteEverything() {
-      try {
-        for (const c of COLLS) {
-          const ids = await port.listIds(coll(c));
-          for (let i = 0; i < ids.length; i += MAX_PUSH_RECORDS) {
-            await port.commit(ids.slice(i, i + MAX_PUSH_RECORDS).map((id) => ({ kind: "delete", path: `${coll(c)}/${id}` })));
-          }
-        }
-        await port.commit([{ kind: "delete", path: userPath }]);
-        return ok(undefined);
-      } catch (e) {
-        return err(mapFirestoreError(e));
-      }
     },
   };
 }

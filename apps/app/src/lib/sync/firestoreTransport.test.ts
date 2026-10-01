@@ -6,6 +6,7 @@ import {
   decodeCursor,
   encodeCursor,
   mapFirestoreError,
+  mapReadError,
   maxCursor,
 } from "./firestoreTransport.ts";
 import { toSyncChanges } from "./mapping.ts";
@@ -106,12 +107,29 @@ describe("push and pull", () => {
     expect(await t.push(stale)).toEqual({ ok: false, error: { kind: "rejected" } });
   });
 
-  test("deleteEverything removes all of the user's documents", async () => {
+  test("clients never delete: a delete op is refused by the rules (mimic)", async () => {
     const { fs, t } = mk();
     await t.pull(null);
     await t.push(toSyncChanges(makeData()));
-    expect((await t.deleteEverything()).ok).toBe(true);
-    expect(fs.docs().size).toBe(0);
+    const [first] = [...fs.docs().keys()];
+    await expect(fs.port.commit([{ kind: "delete", path: first! }])).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
+  test("a new profile gets createdAt <= updatedAt (the rules require it)", async () => {
+    const { fs, t } = mk();
+    await t.pull(null);
+    const c = toSyncChanges(makeData());
+    expect((await t.push(c)).ok).toBe(true);
+    const doc = [...fs.docs()].find(([p]) => p.split("/").length === 2)![1];
+    expect(doc.createdAt).toBe(c.profile!.updatedAt);
+  });
+
+  test("a read refused with permission-denied means the account is blocked", async () => {
+    const { fs, t } = mk();
+    fs.setBlocked("u1", true);
+    expect(await t.pull(null)).toEqual({ ok: false, error: { kind: "blocked" } });
+    expect(mapReadError({ code: "permission-denied" })).toEqual({ kind: "blocked" });
+    expect(mapReadError({ code: "unavailable" })).toEqual({ kind: "network" });
   });
 });
 

@@ -17,6 +17,8 @@ export interface MockControls {
   docs(): Record<string, Record<string, unknown>>;
   /** Ends the session as if revoked server-side. */
   revoke(): void;
+  /** Blocks / unblocks the mock user server-side (blocked/{uid}). */
+  block(on?: boolean): void;
   failNext(...codes: (string | null)[]): void;
   /** Next sign-in / re-auth popup is closed by the user. */
   cancelNextPopup(): void;
@@ -87,6 +89,10 @@ export function createMockBackend(): SyncBackend {
       localStorage.removeItem(AUTH_KEY);
       signedOutListeners.forEach((l) => l());
     },
+    block(on = true) {
+      fs.setBlocked("mock-uid", on);
+      save();
+    },
     failNext: (...codes) => fs.failNext(...codes),
     cancelNextPopup: () => void (cancelPopup = true),
     stats: () => ({ ...fs.stats }),
@@ -107,8 +113,10 @@ export function createMockBackend(): SyncBackend {
     async deleteAccount() {
       if (!user) return err({ kind: "unauthorized" });
       if (!(await popup())) return err({ kind: "cancelled" });
-      const r = await transportFor(user.uid).deleteEverything();
-      if (!r.ok) return r;
+      // user.delete(); the onUserDeleted function then removes its data (and blocks the uid,
+      // which the mock skips: a real re-sign-up gets a new uid, the mock reuses "mock-uid").
+      fs.deleteUserData(user.uid);
+      save();
       user = null;
       localStorage.removeItem(AUTH_KEY);
       return ok(undefined);

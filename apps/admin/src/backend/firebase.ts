@@ -1,4 +1,5 @@
 import { initializeApp } from "firebase/app";
+import { ReCaptchaEnterpriseProvider, initializeAppCheck } from "firebase/app-check";
 import {
   browserPopupRedirectResolver,
   browserSessionPersistence,
@@ -24,6 +25,8 @@ export interface FirebaseWebConfig {
   storageBucket?: string;
   region: string;
   emulators: boolean;
+  /** reCAPTCHA Enterprise site key: App Check on (callables then carry a token). "" = off. */
+  appCheckSiteKey: string;
 }
 
 export function readConfig(): FirebaseWebConfig {
@@ -38,6 +41,7 @@ export function readConfig(): FirebaseWebConfig {
     region: env.VITE_FUNCTIONS_REGION || "us-central1",
     // Never honoured in production builds (vite.config.ts also refuses the flag there).
     emulators: import.meta.env.DEV && env.VITE_USE_EMULATORS === "1",
+    appCheckSiteKey: env.VITE_APPCHECK_SITE_KEY ?? "",
   };
 }
 
@@ -56,6 +60,10 @@ export function createFirebaseBackend(config: FirebaseWebConfig): Backend {
     messagingSenderId: config.messagingSenderId,
     storageBucket: config.storageBucket,
   });
+  if (config.appCheckSiteKey && !config.emulators) {
+    // Required before setting ADMIN_ENFORCE_APP_CHECK=true on the functions (docs/deploy.md).
+    initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
+  }
   // Session (tab) persistence only: closing the tab ends the admin session, and nothing lands in
   // IndexedDB/localStorage. Explicit popup resolver = no redirect-flow code paths.
   const auth = initializeAuth(app, {

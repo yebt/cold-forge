@@ -1,6 +1,6 @@
 import type { HabitTemplateId, ISODate } from "@cold-forge/core";
 import type { Locale } from "@cold-forge/i18n";
-import { LIMITS } from "@cold-forge/sync";
+import { LIMITS, QUOTAS } from "@cold-forge/sync";
 import { newId } from "./ids.ts";
 import { repairEmoji, repairHabitName, repairText } from "./fields.ts";
 
@@ -73,7 +73,7 @@ export interface AppData {
 
 export const DEFAULT_REMINDER_TIME = "21:00";
 
-/** Caps shared with the sync API (code points). */
+/** Caps shared with the sync API and the Firestore rules (UTF-16 code units). */
 export const TEXT_LIMITS = {
   name: LIMITS.nameLength,
   why: LIMITS.whyLength,
@@ -81,7 +81,8 @@ export const TEXT_LIMITS = {
   emoji: LIMITS.emojiLength,
 } as const;
 
-export const DATA_LIMITS = { habits: 500, checkIns: 50_000, milestones: 50 } as const;
+/** Same caps as the server quotas (QUOTAS in @cold-forge/sync). */
+export const DATA_LIMITS = { habits: QUOTAS.habits, checkIns: QUOTAS.checkIns, milestones: 50 } as const;
 
 // Everything stored passes the sync API's rules, so a value typed today can't break sync later.
 const cleanName = (v: string) => repairText("name", v);

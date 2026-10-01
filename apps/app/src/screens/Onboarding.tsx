@@ -3,7 +3,7 @@ import { LOCALES, LOCALE_NAMES, type Locale } from "@cold-forge/i18n";
 import { useMemo, useState, type FormEvent } from "react";
 import { formatShortDate, getTranslations } from "../i18n/index.ts";
 import { arcOptions, type ArcOption } from "../lib/derive.ts";
-import type { NewHabitInput, OnboardingInput } from "../lib/model.ts";
+import { TEXT_LIMITS, type NewHabitInput, type OnboardingInput } from "../lib/model.ts";
 import { checkEmoji, checkField } from "../lib/fields.ts";
 import { EmojiField } from "../ui/EmojiField.tsx";
 import { FieldHint } from "../ui/FieldHint.tsx";
@@ -161,7 +161,7 @@ export function Onboarding({ initialLocale, initialName, initialWhy, today, onDo
               placeholder={o.customHabit}
               aria-label={o.customName}
               aria-invalid={customName !== "" && customProblem !== null}
-              maxLength={60}
+              maxLength={TEXT_LIMITS.name}
             />
             <button type="submit" className="btn secondary" disabled={customProblem !== null}>
               {ui.common.add}

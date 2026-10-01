@@ -1,5 +1,5 @@
 import { LIMITS, SYNC_PROTOCOL_VERSION, isBlank, isEmoji, parseSyncRequest } from "@cold-forge/sync";
-import { cleanText, codePointLength } from "./text.ts";
+import { cleanText } from "./text.ts";
 
 /**
  * User-editable text fields, checked with exactly the rules the API applies (we run a probe
@@ -19,7 +19,7 @@ export const FALLBACK_EMOJI = "🔥";
 export const FALLBACK_HABIT_NAME = "Habit";
 
 const PROBE_ID = "00000000-0000-4000-8000-000000000000";
-const PROBE_TS = "2000-01-01T00:00:00.000Z";
+const PROBE_TS = "2025-01-01T00:00:00.000Z";
 
 /** Would the API accept `value` in this field? */
 export function serverAcceptsText(field: TextField, value: string): boolean {
@@ -33,7 +33,7 @@ export function serverAcceptsText(field: TextField, value: string): boolean {
         }
       : field === "why"
         ? {
-            arcs: [{ id: PROBE_ID, kind: "custom", startDate: "2000-01-01", endDate: "2000-01-02", why: value, createdAt: PROBE_TS, updatedAt: PROBE_TS }],
+            arcs: [{ id: PROBE_ID, kind: "custom", startDate: "2025-01-01", endDate: "2025-01-02", why: value, createdAt: PROBE_TS, updatedAt: PROBE_TS }],
             habits: [],
             checkIns: [],
             profile: null,
@@ -54,7 +54,8 @@ export function serverAcceptsText(field: TextField, value: string): boolean {
 export function checkField(field: TextField, value: string, required = field === "name"): FieldProblem | null {
   const v = value.trim();
   if (required && (v === "" || isBlank(v))) return "blank";
-  if (codePointLength(v) > FIELD_MAX[field]) return "tooLong";
+  // UTF-16 units, like the API, the rules and <input maxLength>.
+  if (v.length > FIELD_MAX[field]) return "tooLong";
   // Not blank but renders as nothing (e.g. only zero-width spaces).
   if (v !== "" && isBlank(v)) return required ? "blank" : "invalid";
   if (!serverAcceptsText(field, v)) return "invalid";

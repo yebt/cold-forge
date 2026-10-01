@@ -6,6 +6,7 @@ import { formatDateTime, formatRelative } from "../format.ts";
 import { ErrorPanel, Skeleton } from "../ui/bits.tsx";
 
 const ACTION_TONE: Record<AuditEntryDto["action"], string> = {
+  "user.view": "",
   "user.disable": "badge-danger",
   "user.enable": "badge-ok",
   "user.delete": "badge-danger",
@@ -87,6 +88,12 @@ export function AuditLog() {
                 <td className="nowrap">
                   <span className={`badge ${ACTION_TONE[e.action]}`}>{a.actions[e.action]}</span>
                   {e.outcome === "error" && <span className="badge badge-danger badge-outline">{a.error}</span>}
+                  {e.outcome === "refused" && (
+                    <span className="badge badge-outline" title={e.code ?? undefined}>
+                      {a.refused}
+                      {e.code ? `: ${e.code}` : ""}
+                    </span>
+                  )}
                 </td>
                 <td>
                   <div className="ellipsis">{e.targetEmail ?? "—"}</div>

@@ -34,6 +34,9 @@ The Firebase web config and URLs come from the committed `apps/app/.env.producti
 Only set them as Pages variables to override a value — and never set one to an empty string
 (Vite would use the empty value).
 
+The production build refuses `VITE_USE_EMULATORS=1` and `VITE_FIREBASE_MOCK=1` (UI tests build the
+mock with `vite build --mode mock`), and the emulator code path is compiled out (`import.meta.env.DEV`).
+
 What the build produces for Cloudflare:
 
 - `_headers` (from `apps/app/public/_headers`): security headers and cache rules. The
@@ -108,12 +111,94 @@ allow-list policy for the owner's email).
 ### Sign-in notes
 
 - The PWA uses `signInWithPopup` (falls back to `signInWithRedirect`). The auth helper is served from
-  `coldforge-work.firebaseapp.com`, which the CSP allows (`frame-src`, `connect-src`).
+  `coldforge-work.firebaseapp.com`, which the CSP allows (`frame-src`, `connect-src`). The app CSP is
+  exact: `connect-src 'self'` + Identity Toolkit, Secure Token, Firestore and the auth domain;
+  `script-src 'self' https://apis.google.com` (gapi for the popup flow); `frame-src` the auth domain +
+  `https://apis.google.com`. No `*.googleapis.com` wildcard, no Cloud Functions host (the app calls none).
 - Browsers that partition third-party storage (Safari, Chrome with 3P cookies off) can break the
   *redirect* flow across domains. If that shows up, proxy `https://app.coldforge.work/__/auth/*` to
   `https://coldforge-work.firebaseapp.com/__/auth/*` (Cloudflare Worker or a Pages Function) and set
   `VITE_FIREBASE_AUTH_DOMAIN=app.coldforge.work`. The service worker already lets `/__/*` navigations
   through to the network.
+
+### Rules and Cloud Functions
+
+`firebase-tools` is pinned (15.32.1, same as CI); bump it deliberately.
+
+```sh
+bunx firebase-tools@15.32.1 deploy --only firestore:rules --project coldforge-work
+# Once, before the first functions deploy (and whenever the list changes): the admin allowlist is a
+# Secret Manager secret, never committed (the repo is public and it names the owner).
+bunx firebase-tools@15.32.1 functions:secrets:set ADMIN_ALLOWED_EMAILS --project coldforge-work   # e.g. you@gmail.com
+bunx firebase-tools@15.32.1 deploy --only functions --project coldforge-work
+```
+
+- `ADMIN_ALLOWED_EMAILS` (secret, comma-separated): with it unset or empty, **every admin call is refused**
+  (fail closed) unless `ADMIN_ALLOW_ANY_ADMIN=true` is set in `apps/functions/.env.coldforge-work`
+  (not recommended). An interactive deploy prompts for a missing secret; a non-interactive one fails
+  with the `functions:secrets:set` command to run. Changing it later: set a new version, then redeploy
+  (`firebase deploy --only functions`) so instances pick it up.
+- Deploy the rules and the functions together: the rules read `blocked/{uid}`, which only the
+  functions write (quota triggers, admin disable/delete, `onUserDeleted`).
+- The new functions need the Cloud Scheduler API (two scheduled jobs) and Eventarc (Firestore
+  triggers); the first deploy enables them (Blaze plan).
+
+### Account deletion (behaviour)
+
+The app re-authenticates with Google and calls `user.delete()`; it no longer deletes documents itself
+(the rules refuse client deletes). `onUserDeleted` blocks the uid and erases `users/{uid}` within
+seconds, and erases it once more an hour later. The app tells the user their data "will be erased
+from our servers within a few minutes". The `blocked/{uid}` doc (reason `deleted`) is kept forever.
+
+### App Check (implemented, OFF by default)
+
+App Check is wired into the app (web/PWA) and the admin panel but only turns on when the build has
+`VITE_APPCHECK_SITE_KEY` (a reCAPTCHA Enterprise site key). With it set, the CSP of that build also
+allows `https://www.google.com/recaptcha/`, `https://www.gstatic.com/recaptcha/`,
+`https://recaptcha.google.com/recaptcha/`, `https://content-firebaseappcheck.googleapis.com` and
+`https://recaptchaenterprise.googleapis.com`; without it those hosts are not in the CSP and the App Check
+code is not even in the bundle.
+
+To enable and then enforce:
+
+1. Google Cloud console → reCAPTCHA Enterprise → create a **website** key for `app.coldforge.work`,
+   `admin.coldforge.work` (and `localhost` for dev, or use a debug token).
+2. Firebase console → App Check → register both web apps with the reCAPTCHA Enterprise provider and
+   that key.
+3. Set `VITE_APPCHECK_SITE_KEY` (Pages variable or `.env.production`) for `apps/app` and `apps/admin`,
+   redeploy both. Watch App Check → Metrics for a few days: requests should be "verified".
+4. Admin callables: set `ADMIN_ENFORCE_APP_CHECK=true` in `apps/functions/.env.coldforge-work` and
+   redeploy the functions (only after step 3 for the admin panel, or the panel stops working).
+5. Firestore: App Check → APIs → Cloud Firestore → **Enforce** — but read the APK caveat first.
+
+**Sideloaded APK caveat.** The Android APK is distributed through GitHub Releases, not Google Play.
+App Check's Android provider is Play Integrity, which won't vouch for an app that wasn't installed from
+Play (its app-recognition verdict fails), and the web reCAPTCHA provider doesn't work inside the
+Capacitor WebView (`https://localhost` origin). So the APK sends no App Check token, and **enforcing
+App Check on Firestore would lock every APK user out of sync.** Options, in order of preference:
+- keep Firestore enforcement **off** while the GitHub APK exists (enforce only on the admin callables);
+- publish the APK on Google Play and add `@capacitor-firebase/app-check` with Play Integrity;
+- a debug provider with a per-build debug token: it works, but the token ships inside the APK and is
+  extractable, so it only raises the bar slightly.
+Budget alerts and the per-user quotas (below / `docs/firebase.md`) are the controls that work for every
+client today.
+
+### Budget alerts (do this before launch)
+
+Google Cloud console → Billing → Budgets & alerts → Create budget for project `coldforge-work`:
+- amount: a small monthly figure you'd notice (e.g. $10), scope: all services;
+- thresholds: 50 %, 90 %, 100 % of actual spend and 100 % of **forecasted** spend;
+- email the billing admins (and yourself); optionally connect a Pub/Sub topic (see below).
+
+Also useful: Firestore → Usage, and Cloud Monitoring alerts on `firestore.googleapis.com/document/write_count`
+and `.../read_count` (e.g. > 1M/hour) so a spike pages you within the hour instead of at month end.
+The quota jobs log `quota exceeded: account blocked` and `quota outlier` (Cloud Logging → filter on
+those messages, or a log-based alert).
+
+**Optional kill switch (not implemented).** A budget can publish to a Pub/Sub topic; a small function
+subscribed to it could, above 100 %, deploy a "deny all writes" ruleset or disable billing for the
+project (Google's "cap costs" sample). Disabling billing stops *everything* (Auth, Firestore, Functions)
+and can delete resources after a grace period, so it is a last resort; a deny-writes ruleset is gentler.
 
 ---
 
@@ -129,7 +214,11 @@ Workflow: `.github/workflows/android.yml`.
 - No keystore secrets → it builds a **debug** APK with a loud warning; on a tag the release is marked
   *pre-release* and not *latest*, so the public download link never points at a debug build.
 
-The native project `apps/app/android` is committed (generated with `bunx cap add android`). Launcher
+The native project `apps/app/android` is committed (generated with `bunx cap add android`). Its
+`AndroidManifest.xml` sets `android:allowBackup="false"` plus `dataExtractionRules`
+(`res/xml/data_extraction_rules.xml`, Android 12+) and `fullBackupContent` (`res/xml/backup_rules.xml`)
+excluding every domain, so habit data and the Firebase session never go to a Google Drive backup or a
+device-to-device transfer. `cap sync` doesn't touch the manifest or those files. Launcher
 icons, adaptive icon (with the Android 13 monochrome layer) and splash screens are generated from
 `apps/app/assets` (see section 5).
 
@@ -182,7 +271,8 @@ Users verify a download with `sha256sum -c cold-forge.apk.sha256`. Installing ne
 `actions/upload-artifact` v7.0.1, `softprops/action-gh-release` v3.0.3. To update one, resolve the new
 tag to its commit (`git ls-remote https://github.com/<owner>/<repo>.git 'refs/tags/vX.Y.Z^{}'`, or the
 plain tag ref for lightweight tags) and replace the SHA and the version comment.
-`ci.yml` runs install (`--frozen-lockfile`), typecheck, tests and both builds on every push/PR.
+`ci.yml` runs install (`--frozen-lockfile`), typecheck, tests and both builds on every push/PR, plus
+the Firestore rules + emulator suite with `firebase-tools` pinned to an exact version (15.32.1).
 
 ---
 

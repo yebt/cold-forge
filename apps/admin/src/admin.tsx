@@ -25,6 +25,7 @@ export function useAdmin(): AdminContextValue {
 export function errorMessage(error: unknown): string {
   if (error instanceof CallError) {
     if (error.reason === "rate-limited") return copy.errors.rateLimited;
+    if (error.reason === "allowlist-not-configured") return copy.errors.notConfigured;
     // Server messages for deliberate refusals are written for admins; everything else is generic.
     if (error.code === "failed-precondition" || error.code === "invalid-argument") return error.message;
     return copy.errors.byCode[error.code] ?? copy.errors.generic;

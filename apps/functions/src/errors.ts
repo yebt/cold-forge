@@ -18,7 +18,9 @@ export type AdminErrorReason =
   | "target-is-admin"
   | "confirm-mismatch"
   | "session-revoked"
-  | "rate-limited";
+  | "rate-limited"
+  /** ADMIN_ALLOWED_EMAILS is empty in production and ADMIN_ALLOW_ANY_ADMIN is not true (fail closed). */
+  | "allowlist-not-configured";
 
 export class AdminError extends Error {
   readonly code: AdminErrorCode;

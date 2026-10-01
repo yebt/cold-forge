@@ -19,7 +19,7 @@ beforeEach(() => {
   data = new FakeData();
   data.counts.set("bob", { arcs: 1, habits: 4, checkIns: 30 });
   data.profiles.set("bob", { displayName: "Bob", locale: "es", currentArcId: "arc1", createdAt: null, updatedAt: "2026-09-30T00:00:00.000Z" });
-  svc = createAdminService({ auth, data, now: () => NOW });
+  svc = createAdminService({ auth, data, now: () => NOW, config: { allowAnyAdmin: true } });
 });
 
 async function failure(promise: Promise<unknown>): Promise<AdminError> {
@@ -65,6 +65,38 @@ describe("authorization", () => {
   test("validation runs after authorization", async () => {
     expect((await failure(svc.getUser(undefined, { uid: "../x" }))).code).toBe("unauthenticated");
     expect((await failure(svc.getUser(adminCtx(alice), { uid: "../x" }))).code).toBe("invalid-argument");
+  });
+});
+
+describe("L5: audit of refusals and sensitive reads", () => {
+  test("rate-limited mutations are audited as refused; rate-limited list pages are not", async () => {
+    const ctx = adminCtx(alice);
+    for (let i = 0; i < 10; i++) await svc.setDisabled(ctx, { uid: "bob", disabled: i % 2 === 0, reason: "testing" });
+    const before = data.audit.length;
+    await failure(svc.setDisabled(ctx, { uid: "bob", disabled: true, reason: "testing" }));
+    expect(data.audit.length).toBe(before + 1);
+    expect(data.audit[0]).toMatchObject({ action: "user.disable", targetUid: "bob", outcome: "refused", code: "rate-limited" });
+    for (let i = 0; i < 60; i++) await svc.listUsers(ctx, {});
+    const n = data.audit.length;
+    expect((await failure(svc.listUsers(ctx, {}))).reason).toBe("rate-limited");
+    expect(data.audit.length).toBe(n);
+  });
+
+  test("viewing one account is audited (user.view); list pages are not", async () => {
+    await svc.listUsers(adminCtx(alice), {});
+    expect(data.audit).toEqual([]);
+    await svc.getUser(adminCtx(alice), { uid: "bob" });
+    expect(data.audit[0]).toMatchObject({ actorUid: "alice", action: "user.view", targetUid: "bob", targetEmail: "bob@example.com", outcome: "ok" });
+  });
+
+  test("L6: with no allowlist and no explicit opt-out, every admin call is refused", async () => {
+    const closed = createAdminService({ auth, data, now: () => NOW });
+    const err = await failure(closed.stats(adminCtx(alice), {}));
+    expect([err.code, err.reason]).toEqual(["permission-denied", "allowlist-not-configured"]);
+    expect(data.rate.size).toBe(0); // refused before any I/O
+    const listed = createAdminService({ auth, data, now: () => NOW, config: { allowedEmails: ["alice@example.com"] } });
+    expect((await listed.stats(adminCtx(alice), {})).totalUsers).toBe(3);
+    expect((await failure(listed.stats(adminCtx(carol), {}))).code).toBe("permission-denied");
   });
 });
 
@@ -115,18 +147,35 @@ describe("setDisabled", () => {
     const res = await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: true, reason: "abuse" });
     expect(res.user?.disabled).toBe(true);
     expect(auth.calls).toEqual(["setDisabled:bob:true", "revoke:bob"]);
-    expect(data.audit[0]).toMatchObject({ actorUid: "alice", action: "user.disable", targetUid: "bob", reason: "abuse", outcome: "ok" });
+    expect(data.audit[0]).toMatchObject({ actorUid: "alice", action: "user.disable", targetUid: "bob", reason: "abuse", outcome: "ok", code: null });
+  });
+  test("M1: disabling writes blocked/{uid} (Firestore access ends at once); enabling lifts only that block", async () => {
+    await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: true, reason: "abuse" });
+    expect(data.blocked.get("bob")).toBe("disabled");
+    expect(data.calls).toEqual(["block:bob:disabled"]);
+    await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: false, reason: "appeal ok" });
+    expect(data.blocked.has("bob")).toBe(false);
+    // A quota block survives re-enabling (and isn't downgraded by a later disable).
+    data.blocked.set("bob", "quota");
+    await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: true, reason: "abuse again" });
+    expect(data.blocked.get("bob")).toBe("quota");
+    await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: false, reason: "appeal ok" });
+    expect(data.blocked.get("bob")).toBe("quota");
   });
   test("enabling does not revoke", async () => {
     await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: false, reason: "appeal ok" });
     expect(auth.calls).toEqual(["setDisabled:bob:false"]);
     expect(data.audit[0]?.action).toBe("user.enable");
   });
-  test("refuses self and admins", async () => {
+  test("L5: refuses self and admins, and audits the refusals", async () => {
     expect((await failure(svc.setDisabled(adminCtx(alice), { uid: "alice", disabled: true, reason: "oops" }))).reason).toBe("self-action");
     expect((await failure(svc.setDisabled(adminCtx(alice), { uid: "carol", disabled: true, reason: "oops" }))).reason).toBe("target-is-admin");
     expect(auth.calls).toEqual([]);
-    expect(data.audit).toEqual([]);
+    expect(data.blocked.size).toBe(0);
+    expect(data.audit.map(({ action, targetUid, targetEmail, outcome, code }) => ({ action, targetUid, targetEmail, outcome, code }))).toEqual([
+      { action: "user.disable", targetUid: "carol", targetEmail: "carol@example.com", outcome: "refused", code: "target-is-admin" },
+      { action: "user.disable", targetUid: "alice", targetEmail: null, outcome: "refused", code: "self-action" },
+    ]);
   });
 });
 
@@ -136,9 +185,13 @@ describe("deleteUser", () => {
     expect(err.reason).toBe("confirm-mismatch");
     expect(auth.users.has("bob")).toBe(true);
 
+    expect(data.audit[0]).toMatchObject({ action: "user.delete", targetUid: "bob", outcome: "refused", code: "confirm-mismatch" });
+
     await svc.deleteUser(adminCtx(alice), { uid: "bob", confirm: "Bob@Example.com" });
     expect(auth.calls).toEqual(["setDisabled:bob:true", "revoke:bob", "deleteUser:bob"]);
-    expect(data.calls).toEqual(["deleteData:bob"]);
+    // M1: blocked first, so the rules refuse the uid while its data is being removed.
+    expect(data.calls).toEqual(["block:bob:deleted", "deleteData:bob"]);
+    expect(data.blocked.get("bob")).toBe("deleted");
     expect(auth.users.has("bob")).toBe(false);
     expect(data.audit[0]).toMatchObject({ action: "user.delete", targetEmail: "bob@example.com", outcome: "ok" });
   });
@@ -155,6 +208,11 @@ describe("deleteUser", () => {
     const stale = adminCtx(alice, { auth_time: nowSec - 3 * 3600 });
     expect((await failure(svc.deleteUser(stale, { uid: "bob", confirm: "bob@example.com" }))).reason).toBe("recent-login-required");
     expect(auth.users.has("bob")).toBe(true);
+    expect(data.audit.map((a) => [a.outcome, a.code])).toEqual([
+      ["refused", "recent-login-required"],
+      ["refused", "target-is-admin"],
+      ["refused", "self-action"],
+    ]);
   });
 
   test("audits failures and leaves the account disabled", async () => {

@@ -12,6 +12,11 @@ export type SyncError =
    * retries once; after that sync is paused instead of looping.
    */
   | { kind: "rejected" }
+  /**
+   * The account is blocked server-side (blocked/{uid}: disabled or deleted by an admin, or over
+   * quota): every read and write is refused. Sync stops with "contact support", no retries.
+   */
+  | { kind: "blocked" }
   /** The user closed the sign-in / re-auth popup. */
   | { kind: "cancelled" }
   /** Sign-in is continuing via a full-page redirect. */

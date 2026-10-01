@@ -21,7 +21,7 @@ import { connectFirestoreEmulator, initializeFirestore, memoryLocalCache, type F
 import type { AccountInfo, SyncBackend } from "../lib/sync/backend.ts";
 import { err, ok, type SyncError, type SyncResult } from "../lib/sync/errors.ts";
 import { createFirestoreTransport, type FirestoreTransport } from "../lib/sync/firestoreTransport.ts";
-import { REDIRECT_FLAG, USE_EMULATORS, firebaseConfig } from "./config.ts";
+import { REDIRECT_FLAG, firebaseConfig } from "./config.ts";
 import { firestorePort } from "./port.ts";
 
 /**
@@ -36,7 +36,15 @@ import { firestorePort } from "./port.ts";
  *   same `request.auth` on every platform. Needs google-services.json (see docs/firebase.md).
  * - Auth state persists in IndexedDB. Firestore uses the memory cache: the app's own store is the
  *   source of truth, nothing is persisted twice.
+ * - App Check (optional, off unless `VITE_APPCHECK_SITE_KEY` is set at build time): reCAPTCHA
+ *   Enterprise on the web. Not used in the Capacitor APK (see docs/deploy.md, "App Check").
  */
+
+/**
+ * Build-time constants: Vite inlines them, so with no site key (the default) the App Check code is
+ * dead and dropped, and the emulator branch never exists in a production bundle.
+ */
+const APPCHECK_SITE_KEY = import.meta.env.VITE_APPCHECK_SITE_KEY ?? "";
 
 const isNative = () => Capacitor.isNativePlatform();
 
@@ -80,7 +88,7 @@ async function nativeGoogleCredential() {
   return GoogleAuthProvider.credential(idToken, result.credential?.accessToken);
 }
 
-export function createFirebaseBackend(): SyncBackend {
+export async function createFirebaseBackend(): Promise<SyncBackend> {
   const config = firebaseConfig();
   if (!config) {
     const notConfigured = async () => err({ kind: "not_configured" });
@@ -97,12 +105,20 @@ export function createFirebaseBackend(): SyncBackend {
   }
 
   const app: FirebaseApp = initializeApp(config);
+  if (APPCHECK_SITE_KEY && !isNative()) {
+    // Loaded only when enabled (its own lazy chunk), and before Auth/Firestore make their first
+    // request, so every request carries a token.
+    const { ReCaptchaEnterpriseProvider, initializeAppCheck } = await import("firebase/app-check");
+    initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(APPCHECK_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }
   const auth: Auth = initializeAuth(app, {
     persistence: indexedDBLocalPersistence,
     ...(isNative() ? {} : { popupRedirectResolver: browserPopupRedirectResolver }),
   });
   const db: Firestore = initializeFirestore(app, { localCache: memoryLocalCache() });
-  if (USE_EMULATORS) {
+  // Literal `import.meta.env.DEV`: false in `vite build`, so this branch (and the emulator hosts)
+  // is compiled out of every build; vite.config.ts also refuses VITE_USE_EMULATORS=1 in production.
+  if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === "1") {
     connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
     connectFirestoreEmulator(db, "127.0.0.1", 8080);
   }
@@ -179,10 +195,10 @@ export function createFirebaseBackend(): SyncBackend {
       } catch (e) {
         return err(authError(e));
       }
-      const wiped = await transportFor(user.uid).deleteEverything();
-      if (!wiped.ok) return wiped;
       try {
-        await user.delete(); // the onUserDeleted function removes anything left over
+        // Clients can't delete Firestore documents. Deleting the Auth user fires onUserDeleted,
+        // which blocks the uid (rules refuse it at once) and erases users/{uid} recursively.
+        await user.delete();
       } catch (e) {
         return err(authError(e));
       }

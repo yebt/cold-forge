@@ -11,11 +11,14 @@
     "build": "bun run build.ts",
     "typecheck": "tsc -p .",
     "test": "bun test src",
-    "test:emulators": "bun run build && cd ../.. && bunx firebase-tools@15 emulators:exec --project demo-coldforge --only auth,firestore,functions 'bun apps/functions/integration/run.ts'",
+    "test:emulators": "bun run build && cd ../.. && bunx firebase-tools@15.32.1 emulators:exec --project demo-coldforge --only auth,firestore,functions 'bun apps/functions/integration/run.ts'",
     "gcp-build": ""
   },
   "dependencies": {
     "firebase-admin": "^14.5.0",
     "firebase-functions": "^7.4.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

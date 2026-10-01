@@ -1,6 +1,7 @@
 import { AdminError } from "../errors.ts";
 import type { AuthContext } from "../guard.ts";
-import type { AuditEntry, AuditRecord, AuthPort, AuthUser, DataPort, ProfileView, UserCounts } from "../ports.ts";
+import type { AuditEntry, AuditRecord, AuthPort, AuthUser, BlockReason, DataPort, ProfileView, UserCounts } from "../ports.ts";
+import type { CountedKind, QuotaPort, QuotaRow } from "../quota.ts";
 import { consumeWindow, type WindowState } from "../rateLimit.ts";
 
 /** In-memory Auth + Firestore fakes for service tests. */
@@ -93,7 +94,11 @@ export class FakeAuth implements AuthPort {
   }
 }
 
+const RANK: Record<BlockReason, number> = { disabled: 1, quota: 2, deleted: 3 };
+
 export class FakeData implements DataPort {
+  /** blocked/{uid} */
+  blocked = new Map<string, BlockReason>();
   counts = new Map<string, UserCounts>();
   profiles = new Map<string, ProfileView>();
   audit: AuditEntry[] = [];
@@ -101,6 +106,20 @@ export class FakeData implements DataPort {
   calls: string[] = [];
   failDeleteData = false;
 
+  async setBlocked(uid: string, reason: BlockReason) {
+    this.calls.push(`block:${uid}:${reason}`);
+    const cur = this.blocked.get(uid);
+    if (!cur || RANK[reason] >= RANK[cur]) this.blocked.set(uid, reason);
+  }
+  async unblockDisabled(uid: string) {
+    const cur = this.blocked.get(uid) ?? null;
+    if (cur === "disabled") {
+      this.calls.push(`unblock:${uid}`);
+      this.blocked.delete(uid);
+      return null;
+    }
+    return cur;
+  }
   async countUserData(uid: string) {
     return this.counts.get(uid) ?? { arcs: 0, habits: 0, checkIns: 0 };
   }
@@ -144,5 +163,71 @@ export class FakeData implements DataPort {
     const { allowed, next } = consumeWindow(this.rate.get(key) ?? null, rule, now.getTime());
     this.rate.set(key, next);
     return allowed;
+  }
+}
+
+/** In-memory quota/{uid} + blocked/{uid} + users/{uid} check-in counts for the quota jobs. */
+export class FakeQuota implements QuotaPort {
+  quota = new Map<string, { arcs: number; habits: number; checkIns: number | null; countedAt: number | null; updatedAt: number }>();
+  blocked = new Map<string, { reason: BlockReason; sweepAfter: number | null }>();
+  /** Live number of check-in docs per user (what count() would return). */
+  checkInDocs = new Map<string, number>();
+  users = new Set<string>();
+  calls: string[] = [];
+  now = NOW.getTime();
+
+  private row(uid: string) {
+    let r = this.quota.get(uid);
+    if (!r) this.quota.set(uid, (r = { arcs: 0, habits: 0, checkIns: null, countedAt: null, updatedAt: 0 }));
+    return r;
+  }
+  async increment(uid: string, kind: CountedKind, now: Date) {
+    const r = this.row(uid);
+    r[kind]++;
+    r.updatedAt = now.getTime();
+    return r[kind];
+  }
+  async setBlocked(uid: string, reason: BlockReason) {
+    this.calls.push(`block:${uid}:${reason}`);
+    const cur = this.blocked.get(uid);
+    if (cur && RANK[cur.reason] > RANK[reason]) return;
+    this.blocked.set(uid, { reason, sweepAfter: reason === "deleted" ? this.now + 3_600_000 : null });
+  }
+  async listActive(since: Date, limit: number): Promise<QuotaRow[]> {
+    return [...this.quota]
+      .filter(([, r]) => r.updatedAt >= since.getTime())
+      .slice(0, limit)
+      .map(([uid, r]) => ({ uid, checkIns: r.checkIns }));
+  }
+  async listStale(before: Date, limit: number): Promise<QuotaRow[]> {
+    return [...this.quota]
+      .filter(([, r]) => r.countedAt !== null && r.countedAt < before.getTime())
+      .sort((a, b) => a[1].countedAt! - b[1].countedAt!)
+      .slice(0, limit)
+      .map(([uid, r]) => ({ uid, checkIns: r.checkIns }));
+  }
+  async countCheckIns(uid: string) {
+    this.calls.push(`count:${uid}`);
+    return this.checkInDocs.get(uid) ?? 0;
+  }
+  async saveCheckIns(uid: string, count: number, now: Date) {
+    const r = this.row(uid);
+    r.checkIns = count;
+    r.countedAt = now.getTime();
+  }
+  async listDueSweeps(now: Date, limit: number) {
+    return [...this.blocked]
+      .filter(([, b]) => b.sweepAfter !== null && b.sweepAfter <= now.getTime())
+      .slice(0, limit)
+      .map(([uid]) => uid);
+  }
+  async deleteUserData(uid: string) {
+    this.calls.push(`deleteData:${uid}`);
+    this.users.delete(uid);
+    this.checkInDocs.delete(uid);
+  }
+  async markSwept(uid: string) {
+    const b = this.blocked.get(uid);
+    if (b) b.sweepAfter = null;
   }
 }

@@ -86,6 +86,7 @@ check("cannot disable self", r.status === 400 && r.body?.error?.details?.reason 
 r = await call("adminSetDisabled", adminToken, { uid: victim.uid, disabled: true, reason: "abuse test" });
 check("disable", r.status === 200 && r.body.result.user.disabled === true, r);
 check("disabled in Auth", (await auth.getUser(victim.uid)).disabled === true);
+check("disable writes blocked/{uid} (rules refuse the old token at once)", (await db.doc(`blocked/${victim.uid}`).get()).get("reason") === "disabled");
 
 r = await call("adminDeleteUser", adminToken, { uid: victim.uid, confirm: "wrong@example.com" });
 check("delete needs typed email", r.status === 400 && r.body?.error?.details?.reason === "confirm-mismatch", r);
@@ -93,11 +94,33 @@ check("delete needs typed email", r.status === 400 && r.body?.error?.details?.re
 r = await call("adminDeleteUser", adminToken, { uid: victim.uid, confirm: "VICTIM@example.com" });
 check("delete", r.status === 200, r);
 check("data gone", (await db.collection(`users/${victim.uid}/checkIns`).count().get()).data().count === 0);
+const block = await db.doc(`blocked/${victim.uid}`).get();
+check("deleted account stays blocked, with a delayed second sweep", block.get("reason") === "deleted" && block.get("sweepAfter") != null);
 check("account gone", await auth.getUser(victim.uid).then(() => false, () => true));
 
 r = await call("adminListAuditLog", adminToken, {});
-const actions = (r.body?.result?.entries ?? []).map((e: { action: string }) => e.action);
+const entries: { action: string; outcome: string; code: string | null }[] = r.body?.result?.entries ?? [];
+const actions = entries.map((e) => e.action);
 check("audit log", r.status === 200 && actions[0] === "user.delete" && actions.includes("user.disable"), actions);
+check("user views are audited", actions.includes("user.view"), actions);
+check(
+  "refusals are audited with their code",
+  entries.some((e) => e.outcome === "refused" && e.code === "self-action") && entries.some((e) => e.outcome === "refused" && e.code === "confirm-mismatch"),
+  entries,
+);
+
+// Quota triggers (H1): every arc/habit create bumps quota/{uid}; over QUOTAS.arcs (50) → blocked.
+const hog = "quota-hog";
+const batch = db.batch();
+for (let i = 0; i < 51; i++) batch.set(db.doc(`users/${hog}/arcs/a${i}`), { id: `a${i}` });
+await batch.commit();
+let arcsCounted = 0;
+for (let i = 0; i < 80 && arcsCounted < 51; i++) {
+  await Bun.sleep(250);
+  arcsCounted = ((await db.doc(`quota/${hog}`).get()).get("arcs") as number | undefined) ?? 0;
+}
+check("arc creates are counted in quota/{uid}", arcsCounted === 51, arcsCounted);
+check("over QUOTAS.arcs → blocked/{uid} {reason: quota}", (await db.doc(`blocked/${hog}`).get()).get("reason") === "quota");
 
 // onUserDeleted: deleting an account anywhere (here: directly via the Admin SDK) removes its data.
 const other = await googleSignIn("other-sub", "other@example.com");
@@ -109,7 +132,10 @@ for (let i = 0; i < 40 && remaining > 0; i++) {
   await Bun.sleep(250);
   remaining = (await db.collection(`users/${other.uid}/arcs`).count().get()).data().count;
 }
+// Known sandbox limitation: the Auth emulator's onDelete multicast may be blocked by the proxy
+// here; the trigger's logic (block, then erase) is unit-tested in src/quota.test.ts.
 check("onUserDeleted removes data", remaining === 0);
+check("onUserDeleted leaves blocked/{uid} {reason: deleted}", (await db.doc(`blocked/${other.uid}`).get()).get("reason") === "deleted");
 
 // Demote the admin server-side: the still-valid token must stop working immediately.
 await auth.setCustomUserClaims(admin.uid, null);
