@@ -7,10 +7,9 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter '@cold-forge/app' --filter '@cold-forge/landing' --filter '@cold-forge/api' dev",
+    "dev": "bun run --filter '@cold-forge/app' --filter '@cold-forge/landing' dev",
     "dev:app": "bun run --filter '@cold-forge/app' dev",
     "dev:landing": "bun run --filter '@cold-forge/landing' dev",
-    "dev:api": "bun run --filter '@cold-forge/api' dev",
     "preview:cards": "bun run --filter '@cold-forge/share-card' preview",
     "build": "bun run --filter '@cold-forge/app' --filter '@cold-forge/landing' build",
     "test": "bun test",
