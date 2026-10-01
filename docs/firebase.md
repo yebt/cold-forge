@@ -1,5 +1,8 @@
 # Firebase: data model and responsibilities
 
+Project `coldforge-work` · Firestore database `(default)` in `nam5` (US multi-region, cannot be changed) ·
+Cloud Functions in `us-central1` (same geography as `nam5`).
+
 Guest mode never loads Firebase. Only signed-in users (Google) touch Auth/Firestore.
 
 ## Firestore layout (all per user, owner-only)
