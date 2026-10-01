@@ -8,6 +8,10 @@ export const en = {
   appName: "COLD FORGE",
   tagline: "Forge yourself this winter.",
   days,
+  arcTitles: {
+    winter: (year: number) => `Winter Arc ${year}`,
+    custom: "My 92 days",
+  },
   ranks: {
     ore: "Raw Ore",
     iron: "Iron",
@@ -54,6 +58,7 @@ export const en = {
     rank: (emoji: string, name: string) => `${emoji} Rank: ${name}`,
     habitLine: (emoji: string, name: string, streak: number, total: number) =>
       `${emoji} ${name} — ${streak}🔥 (${days(total)})`,
+    milestone: (title: string, day: number, arc: string) => `🏅 ${title} — Day ${day} of my ${arc}`,
     footer: "Forged with COLD FORGE 🧊⚒️ #WinterArc",
   },
 };

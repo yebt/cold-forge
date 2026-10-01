@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { computeArcStats, FORGE_RANKS, HABIT_TEMPLATES, MILESTONE_DAYS, winterArcWindow } from "@cold-forge/core";
-import { buildShareText, detectLocale, getMessages, LOCALES } from "./index.ts";
+import { buildMilestoneShareText, buildShareText, detectLocale, getMessages, LOCALES } from "./index.ts";
 
 describe("detectLocale", () => {
   test("maps regional tags to supported locales", () => {
@@ -28,5 +28,6 @@ describe("messages", () => {
     expect(buildShareText(stats, getMessages("es"))).toContain("Día 10/92");
     expect(buildShareText(stats, getMessages("pt"))).toContain("Dia 10/92");
     expect(buildShareText(stats, getMessages("en"))).toContain("Raw Ore");
+    expect(buildMilestoneShareText(stats, 7, getMessages("pt"))).toContain("Primeira semana forjada — Dia 7");
   });
 });

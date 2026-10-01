@@ -30,3 +30,16 @@ export function buildShareText(stats: ArcStats, m: Messages): string {
   lines.push("", m.share.footer);
   return lines.join("\n");
 }
+
+/** Text that goes along with a milestone card (day 7, 30, 50, 75, 92). */
+export function buildMilestoneShareText(stats: ArcStats, milestoneDay: number, m: Messages): string {
+  const title = m.milestones[milestoneDay] ?? m.stats.day(milestoneDay, stats.totalDays);
+  return [
+    m.share.milestone(title, milestoneDay, stats.title),
+    "",
+    m.share.perfectStreak(stats.perfectStreak),
+    m.share.rank(stats.rank.emoji, m.ranks[stats.rank.id]),
+    "",
+    m.share.footer,
+  ].join("\n");
+}

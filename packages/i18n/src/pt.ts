@@ -6,6 +6,10 @@ export const pt: Messages = {
   appName: "COLD FORGE",
   tagline: "Forje-se neste inverno.",
   days,
+  arcTitles: {
+    winter: (year) => `Winter Arc ${year}`,
+    custom: "Meus 92 dias",
+  },
   ranks: {
     ore: "Minério bruto",
     iron: "Ferro",
@@ -51,6 +55,7 @@ export const pt: Messages = {
     completion: (pct) => `✅ Cumprimento: ${pct}%`,
     rank: (emoji, name) => `${emoji} Nível: ${name}`,
     habitLine: (emoji, name, streak, total) => `${emoji} ${name} — ${streak}🔥 (${days(total)})`,
+    milestone: (title, day, arc) => `🏅 ${title} — Dia ${day} do meu ${arc}`,
     footer: "Forjado com COLD FORGE 🧊⚒️ #WinterArc",
   },
 };
