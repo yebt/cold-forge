@@ -9,7 +9,7 @@ import ShareShowcase from "../../components/ShareShowcase.astro";
 import Habits from "../../components/Habits.astro";
 import Milestones from "../../components/Milestones.astro";
 import Faq from "../../components/Faq.astro";
-import Waitlist from "../../components/Waitlist.astro";
+import GetApp from "../../components/GetApp.astro";
 import { LOCALES, type Locale } from "../../i18n/index.ts";
 
 export const getStaticPaths = (() => LOCALES.map((locale) => ({ params: { locale } }))) satisfies GetStaticPaths;
@@ -26,5 +26,5 @@ const locale = Astro.params.locale as Locale;
   <Habits locale={locale} />
   <Milestones locale={locale} />
   <Faq locale={locale} />
-  <Waitlist locale={locale} />
+  <GetApp locale={locale} />
 </Base>

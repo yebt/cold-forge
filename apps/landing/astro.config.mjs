@@ -1,14 +1,30 @@
 // @ts-check
-import { defineConfig } from "astro/config";
+import { defineConfig, envField } from "astro/config";
 
-// TODO: set the real production origin (used for canonical, hreflang and OG URLs).
-const site = process.env.SITE_URL ?? "https://coldforge.app";
+/**
+ * Production origins. Override at build time with SITE_URL / APP_URL (Cloudflare Pages env vars),
+ * see docs/deploy.md. SITE_URL feeds canonical, hreflang and OG URLs.
+ */
+const site = process.env.SITE_URL ?? "https://coldforge.work";
 
 export default defineConfig({
   site,
   output: "static",
   trailingSlash: "always",
   build: { format: "directory" },
+  env: {
+    schema: {
+      /** The installable web app (PWA). */
+      APP_URL: envField.string({ context: "client", access: "public", url: true, default: "https://app.coldforge.work" }),
+      /** Signed Android build attached to the latest GitHub release by .github/workflows/android.yml. */
+      APK_URL: envField.string({
+        context: "client",
+        access: "public",
+        url: true,
+        default: "https://github.com/yebt/cold-forge/releases/latest/download/cold-forge.apk",
+      }),
+    },
+  },
   i18n: {
     locales: ["en", "es", "pt"],
     defaultLocale: "en",

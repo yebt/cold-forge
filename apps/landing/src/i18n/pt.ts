@@ -21,19 +21,19 @@ export const pt: LandingCopy = {
     features: "Recursos",
     ranks: "Níveis",
     faq: "Dúvidas",
-    cta: "Lista de espera",
+    cta: "Abrir o app",
   },
   hero: {
     eyebrow: "O app do Winter Arc",
     titleA: "Forje-se",
     titleB: "neste inverno.",
     sub: "92 dias de banho gelado, treino pesado, despertador cedo e páginas lidas. O COLD FORGE transforma cada check-in em calor — e cada sequência em algo que dá orgulho de postar.",
-    appStore: "App Store",
-    googlePlay: "Google Play",
-    downloadOn: "Baixar na",
-    getItOn: "Disponível no",
-    comingSoon: "Em breve",
-    waitlist: "Entrar na lista",
+    openApp: "Abrir o app web",
+    openAppNote: "Instala como um app · funciona offline · sem loja",
+    apk: "Baixar APK",
+    apkPlatform: "Android",
+    apkNote: "Prefere o app web? É o mesmo app.",
+    storesLater: "App Store e Google Play: mais pra frente.",
     countdown: {
       label: "Winter Arc",
       fallback: "1º out → 31 dez · 92 dias",
@@ -101,7 +101,7 @@ export const pt: LandingCopy = {
       },
       offline: {
         title: "Funciona offline",
-        body: "No modo avião, no subsolo da academia, em qualquer lugar. Seus dados ficam no seu celular.",
+        body: "No modo avião, no subsolo da academia, em qualquer lugar. Sem conta: entre com o Google só se quiser sincronizar.",
       },
       languages: {
         title: "3 idiomas",
@@ -150,32 +150,56 @@ export const pt: LandingCopy = {
       },
       {
         q: "O COLD FORGE é grátis?",
-        a: "Sim. Acompanhamento, sequências, níveis e cards são grátis. Se um dia tivermos extras, o essencial continua grátis.",
+        a: "Sim. O acompanhamento, as sequências, os ranks e os cards são grátis. Se um dia tiver extras, o essencial continua grátis.",
+      },
+      {
+        q: "Como eu instalo?",
+        a: "Abra o app web. Android (Chrome): toque em “Instalar app” ou ⋮ → “Instalar app”. iPhone/iPad (Safari): toque em Compartilhar → “Adicionar à Tela de Início”. Computador (Chrome ou Edge): clique no ícone de instalar na barra de endereço. Depois ele abre em tela cheia pela tela de início ou dock, como qualquer app.",
+      },
+      {
+        q: "App web ou APK?",
+        a: "É o mesmo app, com as mesmas funções. O app web instala em segundos, se atualiza sozinho e funciona em qualquer celular ou computador. O APK é a versão Android das nossas releases no GitHub, caso você prefira um arquivo de app clássico; o Android vai pedir para permitir instalações pelo navegador.",
+      },
+      {
+        q: "Preciso de conta?",
+        a: "Não. O COLD FORGE funciona completo sem conta (modo convidado). Entre com o Google só se quiser sincronizar seu arc entre dispositivos: dá pra fazer a qualquer momento e seu progresso local vem junto.",
+      },
+      {
+        q: "O que acontece com meus dados?",
+        a: "Sem conta, tudo fica no seu dispositivo e funciona offline. Se você entrar, seus hábitos e check-ins ficam no seu espaço privado na nuvem, que só você pode ler. Sem anúncios, nada é vendido e os cards só são compartilhados quando você compartilha. Você pode exportar seus dados quando quiser.",
       },
       {
         q: "Posso começar atrasado?",
-        a: "Com certeza. Entre no arc clássico em qualquer dia ou comece seu próprio arc de “meus 92 dias a partir de hoje” quando quiser.",
+        a: "Com certeza. Entre no arc clássico em qualquer dia ou comece seu próprio arc de “meus 92 dias a partir de hoje” quando estiver pronto.",
       },
       {
-        q: "Quais idiomas o app tem?",
-        a: "Inglês, espanhol e português. Ele segue o idioma do seu celular e você pode trocar quando quiser.",
-      },
-      {
-        q: "E os meus dados?",
-        a: "Ficam no seu aparelho. O COLD FORGE funciona totalmente offline, não precisa de conta e nunca vende seus dados. Os cards só são compartilhados quando você compartilha.",
+        q: "Quais idiomas ele suporta?",
+        a: "Inglês, espanhol e português. Ele segue o idioma do seu dispositivo e você pode trocar quando quiser.",
       },
     ],
   },
-  waitlist: {
-    kicker: "Lista de espera",
-    title: "Seja o primeiro na forja.",
-    sub: "A gente avisa quando o COLD FORGE chegar na App Store e no Google Play. Um e-mail, zero spam.",
-    label: "E-mail",
-    placeholder: "voce@email.com",
-    button: "Entrar na lista",
-    thanks: "Você está na lista. Mantenha o fogo aceso — a gente te avisa no lançamento. 🔥",
-    invalid: "Esse e-mail não parece certo. Tenta de novo?",
-    note: "Só usamos seu e-mail para avisar quando o app for lançado.",
+  install: {
+    kicker: "Baixe o app",
+    title: "Instala em segundos. Sem loja.",
+    sub: "O COLD FORGE é um app web que você pode instalar: abre em tela cheia pela tela de início, funciona offline e se atualiza sozinho.",
+    open: "Abrir o app web",
+    apk: "Baixar APK (Android)",
+    apkNote: "Prefere o app web? É o mesmo app.",
+    guest: "Sem conta. Entrar com o Google é opcional, só para sincronizar entre dispositivos.",
+    platforms: [
+      {
+        name: "Android",
+        steps: ["Abra o app web no Chrome.", "Toque em “Instalar app” (ou ⋮ → “Instalar app”).", "Encontre o COLD FORGE na tela de início."],
+      },
+      {
+        name: "iPhone e iPad",
+        steps: ["Abra o app web no Safari.", "Toque em Compartilhar e depois em “Adicionar à Tela de Início”.", "Toque em “Adicionar” e pronto."],
+      },
+      {
+        name: "Computador",
+        steps: ["Abra o app web no Chrome ou Edge.", "Clique no ícone de instalar na barra de endereço.", "Abra pelo dock ou menu iniciar."],
+      },
+    ],
   },
   footer: {
     line: "Feito para os meses frios.",

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">COLD FORGE</string>
+    <string name="title_activity_main">COLD FORGE</string>
+    <string name="package_name">app.coldforge</string>
+    <string name="custom_url_scheme">app.coldforge</string>
+</resources>
