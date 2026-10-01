@@ -46,7 +46,8 @@ function seedUsers(): UserRowDto[] {
       createdAt: new Date(created).toISOString(),
       lastSignIn: new Date(NOW - (i % 9) * DAY * 0.6 - i * 600_000).toISOString(),
       providers: ["google.com"],
-      admin: i === 0,
+      // Mirrors the server: the Admin badge means "email is in ADMIN_ALLOWED_EMAILS".
+      isAdmin: i === 0,
       counts: { arcs, habits, checkIns: Math.max(0, habits * (40 - i) - (i % 7) * 3) },
     };
   });
@@ -58,7 +59,6 @@ function seedAudit(users: UserRowDto[]): AuditEntryDto[] {
   const pick = (i: number) => users[i]!;
   const rows: Array<[AuditEntryDto["action"], number, string | null, number, AuditEntryDto["outcome"]]> = [
     ["user.disable", 6, "Spam display names reported by several users", 0.2, "ok"],
-    ["admin.grant", 0, "Second admin for on-call coverage", 1.1, "ok"],
     ["user.disable", 17, "Chargeback dispute pending", 2.4, "ok"],
     ["user.enable", 12, "Appeal reviewed, account restored", 3.8, "ok"],
     ["user.delete", 30, "GDPR erasure request #114", 5.0, "ok"],
@@ -108,6 +108,9 @@ export function createMockBackend(): Backend {
   };
 
   const handlers: { [K in AdminCallableName]: (data: AdminCallables[K][0]) => AdminCallables[K][1] } = {
+    adminWhoAmI() {
+      return { email: ME.email, isAdmin: true };
+    },
     adminStats(): StatsResponse {
       const created = (days: number) => users.filter((u) => u.createdAt && Date.parse(u.createdAt) >= NOW - days * DAY).length;
       const sum = (k: "arcs" | "habits" | "checkIns") => users.reduce((n, u) => n + (u.counts?.[k] ?? 0), 0);
@@ -115,7 +118,7 @@ export function createMockBackend(): Backend {
         totalUsers: users.length,
         usersCapped: false,
         disabledUsers: users.filter((u) => u.disabled).length,
-        admins: users.filter((u) => u.admin).length + 1,
+        admins: users.filter((u) => u.isAdmin).length + 1,
         signups7d: created(7),
         signups30d: created(30),
         active7d: Math.round(users.length * 0.62),
@@ -145,7 +148,7 @@ export function createMockBackend(): Backend {
     },
     adminSetDisabled({ uid, disabled, reason }) {
       const user = find(uid);
-      if (user.admin && disabled) fail("failed-precondition", "Remove admin rights before disabling this account.", "target-is-admin");
+      if (user.isAdmin && disabled) fail("failed-precondition", "Admins can't be disabled. Remove the email from ADMIN_ALLOWED_EMAILS and redeploy first.", "target-is-admin");
       user.disabled = disabled;
       log(disabled ? "user.disable" : "user.enable", user, reason);
       return { ok: true, user: { ...user, counts: null } };
@@ -153,21 +156,13 @@ export function createMockBackend(): Backend {
     adminDeleteUser({ uid, confirm, reason }) {
       recent();
       const user = find(uid);
-      if (user.admin) fail("failed-precondition", "Remove admin rights before deleting this account.", "target-is-admin");
+      if (user.isAdmin) fail("failed-precondition", "Admins can't be deleted. Remove the email from ADMIN_ALLOWED_EMAILS and redeploy first.", "target-is-admin");
       if (confirm.trim().toLowerCase() !== (user.email ?? user.uid).toLowerCase()) {
         fail("invalid-argument", "Confirmation does not match the account's email.", "confirm-mismatch");
       }
       users = users.filter((u) => u.uid !== uid);
       log("user.delete", user, reason ?? null);
       return { ok: true, user: null };
-    },
-    adminSetAdmin({ uid, admin, reason }) {
-      recent();
-      const user = find(uid);
-      if (admin && user.disabled) fail("failed-precondition", "Only enabled accounts with a verified email can be admins.");
-      user.admin = admin;
-      log(admin ? "admin.grant" : "admin.revoke", user, reason ?? null);
-      return { ok: true, user: { ...user, counts: null } };
     },
     adminListAuditLog(data) {
       const size = data.pageSize ?? 50;

@@ -10,8 +10,6 @@ const ACTION_TONE: Record<AuditEntryDto["action"], string> = {
   "user.disable": "badge-danger",
   "user.enable": "badge-ok",
   "user.delete": "badge-danger",
-  "admin.grant": "badge-ember",
-  "admin.revoke": "badge-ice",
   unknown: "",
 };
 

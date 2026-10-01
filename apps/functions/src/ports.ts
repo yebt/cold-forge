@@ -16,7 +16,6 @@ export interface AuthUser {
   lastRefresh: string | null;
   /** Provider ids, e.g. `google.com`. */
   providers: string[];
-  admin: boolean;
   /** ISO time before which issued tokens are revoked (Auth `tokensValidAfterTime`). */
   tokensValidAfter: string | null;
 }
@@ -33,8 +32,6 @@ export interface AuthPort {
   listUsers(maxResults: number, pageToken: string | null): Promise<UserPage>;
   setDisabled(uid: string, disabled: boolean): Promise<void>;
   revokeRefreshTokens(uid: string): Promise<void>;
-  /** Sets or clears the `admin` claim, keeping any other custom claims. */
-  setAdminClaim(uid: string, admin: boolean): Promise<void>;
   deleteUser(uid: string): Promise<void>;
 }
 
@@ -52,13 +49,7 @@ export interface ProfileView {
   updatedAt: string | null;
 }
 
-export type AuditAction =
-  | "user.view"
-  | "user.disable"
-  | "user.enable"
-  | "user.delete"
-  | "admin.grant"
-  | "admin.revoke";
+export type AuditAction = "user.view" | "user.disable" | "user.enable" | "user.delete";
 
 /** `refused`: a deliberate refusal (see `code`), before anything was changed. */
 export type AuditOutcome = "ok" | "error" | "refused";

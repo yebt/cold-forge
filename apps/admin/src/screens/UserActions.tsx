@@ -5,7 +5,7 @@ import { copy } from "../copy.ts";
 import { confirmMatches, REASON_MAX, reasonValid } from "../format.ts";
 import { ConfirmDialog } from "../ui/Dialog.tsx";
 
-export type UserAction = "disable" | "enable" | "grant" | "revoke" | "delete";
+export type UserAction = "disable" | "enable" | "delete";
 
 interface Props {
   action: UserAction;
@@ -31,8 +31,6 @@ export function UserActionDialog({ action, user, onClose, onDone }: Props) {
   const meta = {
     disable: { title: d.disableTitle, body: d.disableBody(who), confirm: d.disableConfirm, tone: "danger" as const },
     enable: { title: d.enableTitle, body: d.enableBody(who), confirm: d.enableConfirm, tone: "default" as const },
-    grant: { title: d.grantTitle, body: d.grantBody(who), confirm: d.grantConfirm, tone: "danger" as const },
-    revoke: { title: d.revokeTitle, body: d.revokeBody(who), confirm: d.revokeConfirm, tone: "default" as const },
     delete: { title: d.deleteTitle, body: d.deleteBody, confirm: d.deleteConfirm, tone: "danger" as const },
   }[action];
 
@@ -44,10 +42,6 @@ export function UserActionDialog({ action, user, onClose, onDone }: Props) {
       if (action === "disable" || action === "enable") {
         const res = await run("adminSetDisabled", { uid: user.uid, disabled: action === "disable", reason: why ?? "" });
         toast(action === "disable" ? copy.toasts.disabled : copy.toasts.enabled);
-        onDone(res.user ? { ...res.user, counts: user.counts } : null);
-      } else if (action === "grant" || action === "revoke") {
-        const res = await run("adminSetAdmin", { uid: user.uid, admin: action === "grant", reason: why });
-        toast(action === "grant" ? copy.toasts.granted : copy.toasts.revoked);
         onDone(res.user ? { ...res.user, counts: user.counts } : null);
       } else {
         await run("adminDeleteUser", { uid: user.uid, confirm: typed.trim(), reason: why });

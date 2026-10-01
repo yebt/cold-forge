@@ -19,7 +19,7 @@ export type AdminErrorReason =
   | "confirm-mismatch"
   | "session-revoked"
   | "rate-limited"
-  /** ADMIN_ALLOWED_EMAILS is empty in production and ADMIN_ALLOW_ANY_ADMIN is not true (fail closed). */
+  /** ADMIN_ALLOWED_EMAILS is empty or unset: every admin call is refused (fail closed). */
   | "allowlist-not-configured";
 
 export class AdminError extends Error {

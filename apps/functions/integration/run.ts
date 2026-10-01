@@ -3,8 +3,10 @@
  *
  *   bun run test:emulators        # from apps/functions (builds first)
  *
- * Creates Google-provider users in the Auth emulator, grants the admin claim with firebase-admin,
- * then calls the deployed-to-emulator callables over HTTP exactly like the web SDK does.
+ * Creates Google-provider users in the Auth emulator and calls the deployed-to-emulator callables over
+ * HTTP exactly like the web SDK does. Admins are whoever is in the emulator allowlist,
+ * ADMIN_EMULATOR_ALLOWED_EMAILS in apps/functions/.env.demo-coldforge
+ * (" Admin@Example.com ,second-admin@example.com"): no custom claims anywhere.
  * Not a `*.test.ts` file on purpose: the root `bun test` must not need emulators.
  */
 import { initializeApp } from "firebase-admin/app";
@@ -31,12 +33,23 @@ function check(name: string, ok: boolean, extra?: unknown) {
 }
 
 /** Signs in through the Auth emulator's fake Google IdP and returns an ID token. */
-async function googleSignIn(sub: string, email: string): Promise<{ idToken: string; uid: string }> {
-  const idToken = JSON.stringify({ sub, email, email_verified: true, name: sub });
+async function googleSignIn(sub: string, email: string, emailVerified = true): Promise<{ idToken: string; uid: string }> {
+  const idToken = JSON.stringify({ sub, email, email_verified: emailVerified, name: sub });
   const res = await fetch(`http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=fake`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ requestUri: "http://localhost", postBody: `id_token=${encodeURIComponent(idToken)}&providerId=google.com`, returnSecureToken: true }),
+  });
+  const body = (await res.json()) as { idToken: string; localId: string };
+  return { idToken: body.idToken, uid: body.localId };
+}
+
+/** Email/password sign-in (a different provider) through the Auth emulator. */
+async function passwordSignIn(email: string, password: string): Promise<{ idToken: string; uid: string }> {
+  const res = await fetch(`http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password, returnSecureToken: true }),
   });
   const body = (await res.json()) as { idToken: string; localId: string };
   return { idToken: body.idToken, uid: body.localId };
@@ -51,28 +64,62 @@ async function call(name: string, token: string | null, data: unknown): Promise<
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-const admin = await googleSignIn("admin-sub", "admin@example.com");
+const denied = (r: { status: number; body: any }) => r.status === 403 && r.body?.error?.status === "PERMISSION_DENIED";
+
+// Upper-case email from Google: the allowlist entry is " Admin@Example.com " (normalization both ways).
+const admin = await googleSignIn("admin-sub", "ADMIN@example.com");
+const adminToken = admin.idToken;
 const victim = await googleSignIn("victim-sub", "victim@example.com");
-await auth.setCustomUserClaims(admin.uid, { admin: true });
-// Fresh token so it carries the claim.
-const adminToken = (await googleSignIn("admin-sub", "admin@example.com")).idToken;
 
 await db.doc(`users/${victim.uid}`).set({ displayName: "Victim", locale: "en", currentArcId: "a1", updatedAt: new Date().toISOString() });
 await db.doc(`users/${victim.uid}/arcs/a1`).set({ id: "a1" });
 await db.doc(`users/${victim.uid}/habits/h1`).set({ id: "h1", arcId: "a1" });
 await db.doc(`users/${victim.uid}/checkIns/h1_2026-10-01`).set({ habitId: "h1", date: "2026-10-01", done: true });
 
-let r = await call("adminStats", null, {});
+let r = await call("adminWhoAmI", adminToken, {});
+check("whoAmI: allowlisted Google admin (email case/whitespace normalized)", r.status === 200 && r.body?.result?.email === "admin@example.com" && r.body.result.isAdmin === true, r);
+r = await call("adminWhoAmI", victim.idToken, {});
+check("whoAmI: verified Google user outside the allowlist is denied", denied(r), r);
+
+// A custom `admin` claim grants nothing any more.
+await auth.setCustomUserClaims(victim.uid, { admin: true });
+r = await call("adminStats", (await googleSignIn("victim-sub", "victim@example.com")).idToken, {});
+check("admin custom claim is ignored", denied(r), r);
+await auth.setCustomUserClaims(victim.uid, null);
+
+// second-admin@example.com is allowlisted. First try it unverified, then with a password sign-in.
+const unverified = await googleSignIn("unverified-sub", "Second-Admin@example.com", false);
+r = await call("adminWhoAmI", unverified.idToken, {});
+check("allowlisted but unverified email is denied", denied(r), r);
+await auth.deleteUser(unverified.uid);
+
+const pw = await auth.createUser({ email: "second-admin@example.com", password: "correct-horse-1", emailVerified: true });
+r = await call("adminWhoAmI", (await passwordSignIn("second-admin@example.com", "correct-horse-1")).idToken, {});
+check("allowlisted and verified, but password sign-in, is denied", denied(r), r);
+await auth.deleteUser(pw.uid);
+
+// The real second admin (Google): used below for target-is-admin and stale-token checks.
+const second = await googleSignIn("second-sub", "second-admin@example.com");
+r = await call("adminWhoAmI", second.idToken, {});
+check("second allowlisted admin passes", r.status === 200, r);
+
+r = await call("adminStats", null, {});
 check("unauthenticated is refused", r.status === 401 && r.body?.error?.status === "UNAUTHENTICATED", r);
 r = await call("adminStats", victim.idToken, {});
 check("non-admin is refused", r.status === 403 && r.body?.error?.status === "PERMISSION_DENIED", r);
 
 r = await call("adminStats", adminToken, {});
-check("stats", r.status === 200 && r.body.result.totalUsers === 2 && r.body.result.totals.checkIns === 1 && r.body.result.active7d === 1, r);
+check(
+  "stats",
+  r.status === 200 && r.body.result.totalUsers === 3 && r.body.result.admins === 2 && r.body.result.totals.checkIns === 1 && r.body.result.active7d === 1,
+  r,
+);
 
 r = await call("adminListUsers", adminToken, { pageSize: 10 });
 const row = r.body?.result?.users?.find((u: { uid: string }) => u.uid === victim.uid);
-check("list users with counts", r.status === 200 && row?.counts?.habits === 1 && row.providers.includes("google.com"), r);
+check("list users with counts", r.status === 200 && row?.counts?.habits === 1 && row.providers.includes("google.com") && row.isAdmin === false, r);
+const secondRow = r.body?.result?.users?.find((u: { uid: string }) => u.uid === second.uid);
+check("isAdmin is computed from the allowlist", secondRow?.isAdmin === true, secondRow);
 
 r = await call("adminListUsers", adminToken, { pageSize: 1000 });
 check("pageSize is bounded", r.status === 400 && r.body?.error?.status === "INVALID_ARGUMENT", r);
@@ -82,6 +129,15 @@ check("get user with profile", r.status === 200 && r.body.result.profile.display
 
 r = await call("adminSetDisabled", adminToken, { uid: admin.uid, disabled: true, reason: "self" });
 check("cannot disable self", r.status === 400 && r.body?.error?.details?.reason === "self-action", r);
+
+r = await call("adminSetDisabled", adminToken, { uid: second.uid, disabled: true, reason: "rogue admin" });
+check("cannot disable an allowlisted account", r.status === 400 && r.body?.error?.details?.reason === "target-is-admin", r);
+r = await call("adminDeleteUser", adminToken, { uid: second.uid, confirm: "second-admin@example.com" });
+check("cannot delete an allowlisted account", r.status === 400 && r.body?.error?.details?.reason === "target-is-admin", r);
+check("allowlisted account untouched", (await auth.getUser(second.uid)).disabled === false);
+
+r = await call("adminSetAdmin", adminToken, { uid: victim.uid, admin: true });
+check("adminSetAdmin no longer exists", r.status === 404, r.status);
 
 r = await call("adminSetDisabled", adminToken, { uid: victim.uid, disabled: true, reason: "abuse test" });
 check("disable", r.status === 200 && r.body.result.user.disabled === true, r);
@@ -105,7 +161,7 @@ check("audit log", r.status === 200 && actions[0] === "user.delete" && actions.i
 check("user views are audited", actions.includes("user.view"), actions);
 check(
   "refusals are audited with their code",
-  entries.some((e) => e.outcome === "refused" && e.code === "self-action") && entries.some((e) => e.outcome === "refused" && e.code === "confirm-mismatch"),
+  ["self-action", "confirm-mismatch", "target-is-admin"].every((c) => entries.some((e) => e.outcome === "refused" && e.code === c)),
   entries,
 );
 
@@ -137,10 +193,16 @@ for (let i = 0; i < 40 && remaining > 0; i++) {
 check("onUserDeleted removes data", remaining === 0);
 check("onUserDeleted leaves blocked/{uid} {reason: deleted}", (await db.doc(`blocked/${other.uid}`).get()).get("reason") === "deleted");
 
-// Demote the admin server-side: the still-valid token must stop working immediately.
-await auth.setCustomUserClaims(admin.uid, null);
-r = await call("adminStats", adminToken, {});
-check("demoted admin's old token is refused", r.status === 403, r);
+// Stale tokens: the still-valid ID token must stop working as soon as the live account changes.
+await auth.revokeRefreshTokens(second.uid);
+r = await call("adminWhoAmI", second.idToken, {});
+check("token issued before a session revocation is refused", r.status === 401 && r.body?.error?.details?.reason === "session-revoked", r);
+const secondFresh = (await googleSignIn("second-sub", "second-admin@example.com")).idToken;
+r = await call("adminWhoAmI", secondFresh, {});
+check("a fresh sign-in after the revocation works", r.status === 200, r);
+await auth.updateUser(second.uid, { disabled: true }); // e.g. from the Firebase console
+r = await call("adminWhoAmI", secondFresh, {});
+check("a stale token after the account was disabled is refused", denied(r), r);
 
 console.log(failures === 0 ? "\nall emulator checks passed" : `\n${failures} emulator check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

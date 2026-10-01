@@ -1,5 +1,6 @@
 import type {
   AuditEntryDto,
+  WhoAmIResponse,
   ListAuditResponse,
   ListUsersResponse,
   MutationResponse,
@@ -10,6 +11,9 @@ import type {
 import { AdminError, type AdminErrorReason } from "./errors.ts";
 import {
   assertLiveAdmin,
+  isAllowlisted,
+  parseEmailList,
+  refuseAdminTarget,
   refuseSelf,
   requireAdmin,
   requireRecentLogin,
@@ -27,13 +31,12 @@ import {
   parseEmpty,
   parseListAudit,
   parseListUsers,
-  parseSetAdmin,
   parseSetDisabled,
   parseUidOnly,
 } from "./validate.ts";
 
 export interface ServiceConfig extends GuardConfig {
-  /** Max age of the sign-in for delete / admin changes. */
+  /** Max age of the sign-in for delete. */
   recentLoginSeconds: number;
   /** Search scans at most this many Auth pages (1000 accounts each) per call. */
   searchScanPages: number;
@@ -45,8 +48,6 @@ export interface ServiceConfig extends GuardConfig {
 
 export const DEFAULT_SERVICE_CONFIG: ServiceConfig = {
   allowedEmails: [],
-  allowAnyAdmin: false,
-  requireGoogleProvider: true,
   recentLoginSeconds: 30 * 60,
   searchScanPages: 5,
   statsScanPages: 20,
@@ -75,7 +76,7 @@ const AUDITED_REFUSALS = new Set<AdminErrorReason>([
 const rawUid = (raw: unknown): string =>
   typeof raw === "object" && raw !== null && isUid((raw as { uid?: unknown }).uid) ? (raw as { uid: string }).uid : "";
 
-export function toUserRow(user: AuthUser, counts: UserCounts | null): UserRowDto {
+export function toUserRow(user: AuthUser, counts: UserCounts | null, allowedEmails: readonly string[]): UserRowDto {
   return {
     uid: user.uid,
     email: user.email,
@@ -86,7 +87,7 @@ export function toUserRow(user: AuthUser, counts: UserCounts | null): UserRowDto
     createdAt: user.createdAt,
     lastSignIn: user.lastSignIn,
     providers: user.providers,
-    admin: user.admin,
+    isAdmin: isAllowlisted(user.email, allowedEmails),
     counts,
   };
 }
@@ -120,7 +121,9 @@ function matches(user: AuthUser, q: string): boolean {
 export function createAdminService(deps: ServiceDeps) {
   const { auth, data } = deps;
   const now = deps.now ?? (() => new Date());
-  const config: ServiceConfig = { ...DEFAULT_SERVICE_CONFIG, ...deps.config };
+  const merged: ServiceConfig = { ...DEFAULT_SERVICE_CONFIG, ...deps.config };
+  // Normalize once (trim + lower-case), whatever the caller passed.
+  const config: ServiceConfig = { ...merged, allowedEmails: parseEmailList(merged.allowedEmails.join(",")) };
 
   /**
    * `audited`: the action to record if this call is rate limited (mutations and user views; list
@@ -138,7 +141,7 @@ export function createAdminService(deps: ServiceDeps) {
       if (audited) await auditRefusal(actor, audited.action, rawUid(audited.raw), null, error);
       throw error;
     }
-    assertLiveAdmin(actor, await auth.getUser(actor.uid));
+    assertLiveAdmin(actor, await auth.getUser(actor.uid), config);
     return actor;
   }
 
@@ -192,10 +195,18 @@ export function createAdminService(deps: ServiceDeps) {
     return result;
   }
 
+  const row = (u: AuthUser, counts: UserCounts | null) => toUserRow(u, counts, config.allowedEmails);
   const withCounts = (users: AuthUser[]) =>
-    mapLimit(users, config.countConcurrency, async (u) => toUserRow(u, await data.countUserData(u.uid)));
+    mapLimit(users, config.countConcurrency, async (u) => row(u, await data.countUserData(u.uid)));
 
   return {
+    /** Lets the panel ask "am I an admin?" with exactly the checks every other callable runs. */
+    async whoAmI(ctx: AuthContext | undefined | null, raw: unknown): Promise<WhoAmIResponse> {
+      const actor = await authorize(ctx, "read");
+      parseEmpty(raw);
+      return { email: actor.email, isAdmin: true };
+    },
+
     async listUsers(ctx: AuthContext | undefined | null, raw: unknown): Promise<ListUsersResponse> {
       await authorize(ctx, "read");
       const input = parseListUsers(raw);
@@ -234,7 +245,7 @@ export function createAdminService(deps: ServiceDeps) {
       const [counts, profile] = await Promise.all([data.countUserData(uid), data.getProfile(uid)]);
       // Sensitive read (one account's profile and activity): audited, coarsely. List pages are not.
       await audit(actor, "user.view", user, null, "ok");
-      return { user: toUserRow(user, counts), profile, lastRefresh: user.lastRefresh };
+      return { user: row(user, counts), profile, lastRefresh: user.lastRefresh };
     },
 
     async setDisabled(ctx: AuthContext | undefined | null, raw: unknown): Promise<MutationResponse> {
@@ -246,9 +257,7 @@ export function createAdminService(deps: ServiceDeps) {
       await checked(actor, action, input.uid, () => target, async () => {
         refuseSelf(actor, input.uid, input.disabled ? "disable" : "enable");
         target = await requireTarget(input.uid);
-        if (input.disabled && target.admin) {
-          throw new AdminError("failed-precondition", "Remove admin rights before disabling this account.", "target-is-admin");
-        }
+        if (input.disabled) refuseAdminTarget(target, config, "disabled");
       });
       const t = target as unknown as AuthUser;
       await audited(actor, action, t, input.reason, async () => {
@@ -263,7 +272,7 @@ export function createAdminService(deps: ServiceDeps) {
         }
       });
       const updated = await auth.getUser(t.uid);
-      return { ok: true, user: updated ? toUserRow(updated, null) : null };
+      return { ok: true, user: updated ? row(updated, null) : null };
     },
 
     async deleteUser(ctx: AuthContext | undefined | null, raw: unknown): Promise<MutationResponse> {
@@ -274,9 +283,7 @@ export function createAdminService(deps: ServiceDeps) {
         refuseSelf(actor, input.uid, "delete");
         requireRecentLogin(actor, now(), config.recentLoginSeconds);
         found = await requireTarget(input.uid);
-        if (found.admin) {
-          throw new AdminError("failed-precondition", "Remove admin rights before deleting this account.", "target-is-admin");
-        }
+        refuseAdminTarget(found, config, "deleted");
         const expected = (found.email ?? found.uid).toLowerCase();
         if (input.confirm !== expected) {
           throw new AdminError("invalid-argument", "Confirmation does not match the account's email.", "confirm-mismatch");
@@ -293,43 +300,6 @@ export function createAdminService(deps: ServiceDeps) {
         await auth.deleteUser(target.uid);
       });
       return { ok: true, user: null };
-    },
-
-    async setAdmin(ctx: AuthContext | undefined | null, raw: unknown): Promise<MutationResponse> {
-      const guess: AuditAction = typeof raw === "object" && raw !== null && (raw as { admin?: unknown }).admin === false ? "admin.revoke" : "admin.grant";
-      const actor = await authorize(ctx, "write", { action: guess, raw });
-      const input = parseSetAdmin(raw);
-      const action: AuditAction = input.admin ? "admin.grant" : "admin.revoke";
-      let found: AuthUser | null = null;
-      await checked(actor, action, input.uid, () => found, async () => {
-        // Refusing self-changes is also what guarantees at least one admin remains: the actor keeps theirs.
-        refuseSelf(actor, input.uid, "change admin rights on");
-        requireRecentLogin(actor, now(), config.recentLoginSeconds);
-        found = await requireTarget(input.uid);
-      });
-      const target = found as unknown as AuthUser;
-      if (input.admin && (target.disabled || !target.emailVerified || !target.email)) {
-        throw new AdminError("failed-precondition", "Only enabled accounts with a verified email can be admins.");
-      }
-      if (target.admin === input.admin) {
-        return { ok: true, user: toUserRow(target, null) };
-      }
-      await audited(actor, action, target, input.reason, async () => {
-        await auth.setAdminClaim(target.uid, input.admin);
-        if (!input.admin) {
-          // Kill the demoted admin's sessions; the live check already rejects their old tokens.
-          await auth.revokeRefreshTokens(target.uid);
-          // Two admins demoting each other at the same moment could leave none. Re-check the actor
-          // and roll back if they lost their own rights in the meantime.
-          const self = await auth.getUser(actor.uid);
-          if (!self?.admin || self.disabled) {
-            await auth.setAdminClaim(target.uid, true);
-            throw new AdminError("aborted", "Your admin rights changed during this action. Nothing was changed.");
-          }
-        }
-      });
-      const updated = await auth.getUser(target.uid);
-      return { ok: true, user: updated ? toUserRow(updated, null) : null };
     },
 
     async stats(ctx: AuthContext | undefined | null, raw: unknown): Promise<StatsResponse> {
@@ -352,7 +322,7 @@ export function createAdminService(deps: ServiceDeps) {
         for (const u of page.users) {
           totalUsers++;
           if (u.disabled) disabledUsers++;
-          if (u.admin) admins++;
+          if (isAllowlisted(u.email, config.allowedEmails)) admins++;
           const created = u.createdAt ? Date.parse(u.createdAt) : NaN;
           if (created >= d7) signups7d++;
           if (created >= d30) signups30d++;

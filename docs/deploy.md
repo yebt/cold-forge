@@ -7,7 +7,8 @@ landing (`coldforge.work`), and a downloadable **Android APK** built by GitHub A
 | --- | --- | --- | --- |
 | Landing | `apps/landing` (Astro) | `apps/landing/dist` | `https://coldforge.work` |
 | App (PWA) | `apps/app` (Vite + React) | `apps/app/dist` | `https://app.coldforge.work` |
-| Admin | `apps/admin` | `apps/admin/dist` | `https://admin.coldforge.work` (behind Cloudflare Access) |
+| Admin | `apps/admin` | `apps/admin/dist` | `https://admin.coldforge.work` (Cloudflare Access recommended, optional) |
+| Firestore rules + Cloud Functions | `firebase/`, `apps/functions` | — | deployed by GitHub Actions (`firebase-deploy.yml`) |
 | Android APK | `apps/app` + `apps/app/android` (Capacitor) | GitHub Release asset | `https://github.com/yebt/cold-forge/releases/latest/download/cold-forge.apk` |
 
 Firebase project: `coldforge-work` (auth domain `coldforge-work.firebaseapp.com`).
@@ -65,8 +66,9 @@ Optional: `APK_URL` (defaults to the GitHub "latest release" download link above
 ### Admin — project `cold-forge-admin`
 
 Same pattern (`bun run --filter @cold-forge/admin build`, output `apps/admin/dist`); see the admin app's
-own docs. Put `admin.coldforge.work` behind **Cloudflare Zero Trust → Access** (application with an
-allow-list policy for the owner's email).
+own docs. **Recommended, optional:** put `admin.coldforge.work` behind **Cloudflare Zero Trust → Access**
+(application with an allow-list policy for the owner's email). It is defence in depth only: the panel
+works without it, and every admin call is authorized server-side against `ADMIN_ALLOWED_EMAILS`.
 
 ### Custom domains and DNS
 
@@ -126,27 +128,74 @@ allow-list policy for the owner's email).
   `VITE_FIREBASE_AUTH_DOMAIN=app.coldforge.work`. The service worker already lets `/__/*` navigations
   through to the network.
 
-### Rules and Cloud Functions
+### Rules and Cloud Functions (deployed by GitHub Actions)
 
-`firebase-tools` is pinned (15.32.1, same as CI); bump it deliberately.
+After a one-time setup, **every push to `main`** that touches `firebase/**`, `firebase.json`,
+`.firebaserc`, `apps/functions/**`, `packages/sync/**`, `packages/core/**` (bundled into the
+functions) or `bun.lock` runs `.github/workflows/firebase-deploy.yml`: the Firestore rules suite on the
+emulator, then the functions typecheck + unit tests, then
+`firebase deploy --only firestore,functions --project coldforge-work --non-interactive --force`.
+It can also be started by hand (Actions → *Firebase deploy* → *Run workflow*). There is no local
+`firebase deploy` and no `gcloud` on your machine after setup.
+
+**One-time setup** (in this order):
+
+1. **Blaze plan + budget alert** on `coldforge-work` (Cloud Functions need Blaze; see
+   "Budget alerts" below).
+2. **Admin allowlist secret** (already done for `coldforge-work`). It is the whole admin role: whoever
+   signs in with Google using a verified email listed here is an admin. No custom claims, no script.
+   ```sh
+   bunx firebase-tools@15.32.1 functions:secrets:set ADMIN_ALLOWED_EMAILS --project coldforge-work   # you@gmail.com
+   ```
+3. **Keyless deploy identity:** open [Google Cloud Shell](https://shell.cloud.google.com) (gcloud is
+   preinstalled, you're already signed in) as a project Owner and run
+   ```sh
+   git clone https://github.com/yebt/cold-forge.git && bash cold-forge/scripts/setup-github-deploy.sh
+   ```
+   It is idempotent. It creates the `github-deploy@coldforge-work.iam.gserviceaccount.com` service
+   account with least-privilege roles (each one explained in the script), a Workload Identity Pool
+   `github` with an OIDC provider `github-oidc` that only accepts tokens from `yebt/cold-forge` on
+   `refs/heads/main`, and lets that repository impersonate the account. **No JSON key is created.**
+4. **Two GitHub repository variables** (not secrets: they aren't sensitive). Settings → Secrets and
+   variables → Actions → **Variables** → New repository variable, with the two values the script prints:
+   - `GCP_WIF_PROVIDER` = `projects/862693102904/locations/global/workloadIdentityPools/github/providers/github-oidc`
+   - `GCP_DEPLOY_SA` = `github-deploy@coldforge-work.iam.gserviceaccount.com`
+
+   Until both exist the deploy job is skipped with a notice (pushes don't fail).
+
+Then re-run the workflow once (or push). From then on **every push deploys.**
+
+- The deploy job runs in the GitHub **environment `production`** (created automatically on the first
+  run). Add protection rules there whenever you want a manual approval or a branch restriction
+  (Settings → Environments → production); the job then waits for them.
+- One deploy runs at a time (`concurrency: firebase-deploy`, never cancelled halfway).
+- `--force` deletes functions that were removed from the source without prompting. The next deploy
+  therefore **deletes the deployed `adminSetAdmin` function** (admins are now managed only through the
+  secret). The Artifact Registry cleanup policy already configured is kept.
+
+**Changing the admins:** set a new secret version, then redeploy the functions (re-run the workflow,
+or the manual command below). Secrets are read when an instance starts, so the redeploy (or new
+instances) picks up the change.
 
 ```sh
-bunx firebase-tools@15.32.1 deploy --only firestore:rules --project coldforge-work
-# Once, before the first functions deploy (and whenever the list changes): the admin allowlist is a
-# Secret Manager secret, never committed (the repo is public and it names the owner).
-bunx firebase-tools@15.32.1 functions:secrets:set ADMIN_ALLOWED_EMAILS --project coldforge-work   # e.g. you@gmail.com
-bunx firebase-tools@15.32.1 deploy --only functions --project coldforge-work
+bunx firebase-tools@15.32.1 functions:secrets:set ADMIN_ALLOWED_EMAILS --project coldforge-work   # a@gmail.com,b@gmail.com
 ```
 
-- `ADMIN_ALLOWED_EMAILS` (secret, comma-separated): with it unset or empty, **every admin call is refused**
-  (fail closed) unless `ADMIN_ALLOW_ANY_ADMIN=true` is set in `apps/functions/.env.coldforge-work`
-  (not recommended). An interactive deploy prompts for a missing secret; a non-interactive one fails
-  with the `functions:secrets:set` command to run. Changing it later: set a new version, then redeploy
-  (`firebase deploy --only functions`) so instances pick it up.
-- Deploy the rules and the functions together: the rules read `blocked/{uid}`, which only the
-  functions write (quota triggers, admin disable/delete, `onUserDeleted`).
-- The new functions need the Cloud Scheduler API (two scheduled jobs) and Eventarc (Firestore
-  triggers); the first deploy enables them (Blaze plan).
+**Manual fallback** (e.g. GitHub Actions down), from a machine logged in with `firebase login`:
+
+```sh
+bunx firebase-tools@15.32.1 deploy --only firestore,functions --project coldforge-work --force
+```
+
+- `ADMIN_ALLOWED_EMAILS` (secret, comma-separated, case and spaces ignored): with it unset or empty,
+  **every admin call is refused** (fail closed). An interactive deploy prompts for a missing secret; a
+  non-interactive one (CI) fails with the `functions:secrets:set` command to run.
+- Rules and functions deploy together: the rules read `blocked/{uid}`, which only the functions write
+  (quota triggers, admin disable/delete, `onUserDeleted`).
+- The functions need the Cloud Scheduler API (two scheduled jobs) and Eventarc (Firestore triggers);
+  the first deploy enables them (Blaze plan). The first time a *new kind* of trigger is deployed,
+  firebase-tools may need to grant roles to Google service agents, which the CI identity deliberately
+  can't do: it then prints a warning; if that deploy fails, run that one deploy manually as Owner.
 
 ### Account deletion (behaviour)
 
@@ -174,7 +223,7 @@ To enable and then enforce:
 3. Set `VITE_APPCHECK_SITE_KEY` (Pages variable or `.env.production`) for `apps/app` and `apps/admin`,
    redeploy both. Watch App Check → Metrics for a few days: requests should be "verified".
 4. Admin callables: set `ADMIN_ENFORCE_APP_CHECK=true` in `apps/functions/.env.coldforge-work` and
-   redeploy the functions (only after step 3 for the admin panel, or the panel stops working).
+   push (CI redeploys the functions) (only after step 3 for the admin panel, or the panel stops working).
 5. Firestore: App Check → APIs → Cloud Firestore → **Enforce** — but read the APK caveat first.
 
 **Sideloaded APK caveat.** The Android APK is distributed through GitHub Releases, not Google Play.
@@ -276,11 +325,13 @@ Users verify a download with `sha256sum -c cold-forge.apk.sha256`. Installing ne
 
 `actions/checkout` v7.0.1, `oven-sh/setup-bun` v2.2.0, `actions/setup-java` v6.0.1,
 `android-actions/setup-android` v4.0.4, `gradle/actions/setup-gradle` v6.4.0,
-`actions/upload-artifact` v7.0.1, `softprops/action-gh-release` v3.0.3. To update one, resolve the new
+`actions/upload-artifact` v7.0.1, `softprops/action-gh-release` v3.0.3, `actions/setup-node` v7.0.0,
+`google-github-actions/auth` v3.0.0. To update one, resolve the new
 tag to its commit (`git ls-remote https://github.com/<owner>/<repo>.git 'refs/tags/vX.Y.Z^{}'`, or the
 plain tag ref for lightweight tags) and replace the SHA and the version comment.
 `ci.yml` runs install (`--frozen-lockfile`), typecheck, tests and both builds on every push/PR, plus
-the Firestore rules + emulator suite with `firebase-tools` pinned to an exact version (15.32.1).
+the Firestore rules + emulator suite with `firebase-tools` pinned to an exact version (15.32.1). That
+suite lives in the reusable `firestore-rules.yml`, which `firebase-deploy.yml` also runs before deploying.
 
 ---
 
@@ -336,5 +387,6 @@ bun run emulators        # terminal 1: Auth :9099, Firestore :8080, Functions :5
 bun run dev:emulators    # terminal 2: app on :5173 and admin panel against the emulators
 ```
 
-The Auth emulator shows a fake Google account picker: type any email to sign in. Data lives only in
+The Auth emulator shows a fake Google account picker: type any email to sign in. For the admin panel use
+`admin@example.com` (the emulator admin list, `apps/functions/.env.demo-coldforge`). Data lives only in
 the emulators and disappears when they stop. `bun run dev` (no emulators) runs the app guest-only.

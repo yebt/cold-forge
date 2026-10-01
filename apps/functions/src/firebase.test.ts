@@ -30,15 +30,16 @@ test("toAuthUser maps only safe fields", () => {
     lastSignIn: "2026-10-01T11:00:00.000Z",
     lastRefresh: null,
     providers: ["google.com"],
-    admin: true,
     tokensValidAfter: "2026-10-01T10:00:00.000Z",
   });
   expect(JSON.stringify(u)).not.toContain("secret");
 });
 
-test("admin claim must be exactly true", () => {
-  const record = { uid: "u", customClaims: { admin: "true" }, metadata: {}, providerData: [] } as unknown as UserRecord;
-  expect(toAuthUser(record).admin).toBe(false);
+test("custom claims (including a leftover `admin` claim) are never read", () => {
+  const record = { uid: "u", customClaims: { admin: true }, metadata: {}, providerData: [] } as unknown as UserRecord;
+  const u = toAuthUser(record);
+  expect(Object.keys(u)).not.toContain("admin");
+  expect(JSON.stringify(u)).not.toContain("admin");
 });
 
 test("toProfileView whitelists and normalises", () => {
@@ -54,6 +55,11 @@ test("toProfileView whitelists and normalises", () => {
   expect(view.currentArcId).toBeNull();
   expect(view.createdAt).toBe("2026-01-01T00:00:00.000Z");
   expect(Object.keys(view)).not.toContain("secret");
+});
+
+test("removed audit actions (admin.grant / admin.revoke) read as unknown", () => {
+  expect(toAuditEntry("old1", { action: "admin.grant", outcome: "ok" }).action).toBe("unknown");
+  expect(toAuditEntry("old2", { action: "admin.revoke", outcome: "ok" }).action).toBe("unknown");
 });
 
 test("toAuditEntry is defensive about stored data", () => {

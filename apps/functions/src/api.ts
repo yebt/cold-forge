@@ -20,7 +20,8 @@ export interface UserRowDto {
   createdAt: string | null;
   lastSignIn: string | null;
   providers: string[];
-  admin: boolean;
+  /** The account's email is in ADMIN_ALLOWED_EMAILS (computed server-side; such accounts can't be disabled or deleted). */
+  isAdmin: boolean;
   counts: UserCountsDto | null;
 }
 
@@ -67,12 +68,6 @@ export interface DeleteUserRequest {
   reason?: string | null;
 }
 
-export interface SetAdminRequest {
-  uid: string;
-  admin: boolean;
-  reason?: string | null;
-}
-
 export interface MutationResponse {
   ok: true;
   user: UserRowDto | null;
@@ -83,6 +78,7 @@ export interface StatsResponse {
   /** True when the account scan hit its cap; numbers are then lower bounds. */
   usersCapped: boolean;
   disabledUsers: number;
+  /** Scanned accounts whose email is in ADMIN_ALLOWED_EMAILS. */
   admins: number;
   signups7d: number;
   signups30d: number;
@@ -91,7 +87,7 @@ export interface StatsResponse {
   generatedAt: string;
 }
 
-export type AuditActionDto = "user.view" | "user.disable" | "user.enable" | "user.delete" | "admin.grant" | "admin.revoke" | "unknown";
+export type AuditActionDto = "user.view" | "user.disable" | "user.enable" | "user.delete" | "unknown";
 
 export interface AuditEntryDto {
   id: string;
@@ -118,13 +114,19 @@ export interface ListAuditResponse {
   nextPageToken: string | null;
 }
 
+/** `adminWhoAmI`: the caller passed every admin check (otherwise the call fails with permission-denied). */
+export interface WhoAmIResponse {
+  email: string;
+  isAdmin: true;
+}
+
 /** Callable names → [request, response]. */
 export interface AdminCallables {
+  adminWhoAmI: [Record<string, never> | undefined, WhoAmIResponse];
   adminListUsers: [ListUsersRequest, ListUsersResponse];
   adminGetUser: [{ uid: string }, UserDetailResponse];
   adminSetDisabled: [SetDisabledRequest, MutationResponse];
   adminDeleteUser: [DeleteUserRequest, MutationResponse];
-  adminSetAdmin: [SetAdminRequest, MutationResponse];
   adminStats: [Record<string, never> | undefined, StatsResponse];
   adminListAuditLog: [ListAuditRequest, ListAuditResponse];
 }

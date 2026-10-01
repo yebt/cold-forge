@@ -6,7 +6,7 @@ import { ConfirmDialog } from "./ui/Dialog.tsx";
 /**
  * App-wide access to the callables. `run` adds the policies every screen needs:
  * - `recent-login-required` → ask the admin to re-authenticate with Google, then retry once;
- * - `unauthenticated` / `permission-denied` → sign out (claim removed, session revoked…).
+ * - `unauthenticated` / `permission-denied` → sign out (removed from the allowlist, disabled, session revoked…).
  */
 interface AdminContextValue {
   backend: Backend;

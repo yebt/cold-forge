@@ -135,21 +135,6 @@ export function parseDeleteUser(data: unknown): DeleteUserInput {
   };
 }
 
-export interface SetAdminInput {
-  uid: string;
-  admin: boolean;
-  reason: string | null;
-}
-
-export function parseSetAdmin(data: unknown): SetAdminInput {
-  const raw = object(data, ["uid", "admin", "reason"]);
-  return {
-    uid: uid(raw.uid),
-    admin: bool(raw.admin, "admin"),
-    reason: raw.reason === undefined || raw.reason === null ? null : text(raw.reason, "reason", REASON_MIN, REASON_MAX),
-  };
-}
-
 export function parseEmpty(data: unknown): void {
   object(data, []);
 }

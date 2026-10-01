@@ -1,9 +1,13 @@
 # @cold-forge/admin
 
-Internal admin panel (React 19 + Vite), static on Cloudflare Pages at `admin.coldforge.work`,
-behind Cloudflare Access. Google sign-in, then the ID token must carry `admin: true`; otherwise the
-user is signed out ("Not authorized"). All data comes from the admin callables in `apps/functions`.
-The panel never reads Firestore directly.
+Internal admin panel (React 19 + Vite), static on Cloudflare Pages at `admin.coldforge.work`
+(Cloudflare Access in front is recommended, optional). Google sign-in, then the panel calls
+`adminWhoAmI`: only an account the server accepts as admin (verified Google email listed in the
+`ADMIN_ALLOWED_EMAILS` secret, live account check) gets in; anyone else is signed out
+("Not authorized"). The browser evaluates no claim or allowlist itself. All data comes from the admin
+callables in `apps/functions`. The panel never reads Firestore directly. The "Admin" badge on a user
+comes from the server (`isAdmin`: email in the allowlist); such accounts can't be disabled or deleted
+here. Admins are added/removed only through the secret (see `apps/functions/README.md`).
 
 ```sh
 bun run dev:mock       # fixtures only, no Firebase (dev only, compiled out of builds)
@@ -14,8 +18,10 @@ bun run build          # vite build + check that no mock code is in dist/
 - Config: `VITE_FIREBASE_*` + `VITE_FUNCTIONS_REGION` (`.env.production`, see `.env.example`).
   The build fails if they're missing or malformed, and refuses `VITE_USE_EMULATORS` / `VITE_ADMIN_MOCK`.
 - Copy: `src/copy.ts`. Data layer: `src/backend/` (`firebase.ts` real, `mock.ts` dev fixtures).
-- Session: tab-scoped (`browserSessionPersistence`), auto sign-out after 30 idle minutes, claim
-  re-checked on every token refresh. Delete / admin changes may ask to re-authenticate.
+- Session: tab-scoped (`browserSessionPersistence`), auto sign-out after 30 idle minutes, admin
+  status re-checked with `adminWhoAmI` on every token refresh. Delete may ask to re-authenticate.
+- Emulators: sign in as `admin@example.com` in the fake Google picker (the emulator allowlist,
+  `apps/functions/.env.demo-coldforge`).
 
 ## Content-Security-Policy
 

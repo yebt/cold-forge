@@ -65,7 +65,7 @@ export function UserDrawer({ uid, selfUid, onClose, onChanged }: Props) {
               <div className="drawer-title">
                 <h2>{user.displayName ?? user.email ?? uid}</h2>
                 <div className="muted small ellipsis">{user.email ?? copy.users.noEmail}</div>
-                <StatusBadges disabled={user.disabled} admin={user.admin} emailVerified={user.emailVerified} />
+                <StatusBadges disabled={user.disabled} isAdmin={user.isAdmin} emailVerified={user.emailVerified} />
               </div>
             </div>
           ) : (
@@ -134,27 +134,18 @@ export function UserDrawer({ uid, selfUid, onClose, onChanged }: Props) {
                 <p className="muted small">{d.selfNote}</p>
               ) : (
                 <>
-                  {user.admin && <p className="muted small">{d.adminNote}</p>}
+                  {user.isAdmin && <p className="muted small">{d.adminNote}</p>}
                   <div className="actions">
                     {user.disabled ? (
                       <button type="button" className="btn btn-ghost" onClick={() => setAction("enable")}>
                         {d.enable}
                       </button>
                     ) : (
-                      <button type="button" className="btn btn-ghost" onClick={() => setAction("disable")} disabled={user.admin}>
+                      <button type="button" className="btn btn-ghost" onClick={() => setAction("disable")} disabled={user.isAdmin}>
                         {d.disable}
                       </button>
                     )}
-                    {user.admin ? (
-                      <button type="button" className="btn btn-ghost" onClick={() => setAction("revoke")}>
-                        {d.removeAdmin}
-                      </button>
-                    ) : (
-                      <button type="button" className="btn btn-ghost" onClick={() => setAction("grant")} disabled={user.disabled || !user.emailVerified}>
-                        {d.makeAdmin}
-                      </button>
-                    )}
-                    <button type="button" className="btn btn-danger-ghost" onClick={() => setAction("delete")} disabled={user.admin}>
+                    <button type="button" className="btn btn-danger-ghost" onClick={() => setAction("delete")} disabled={user.isAdmin}>
                       {d.delete}
                     </button>
                   </div>

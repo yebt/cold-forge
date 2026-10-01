@@ -7,7 +7,6 @@ import {
   parseEmpty,
   parseListAudit,
   parseListUsers,
-  parseSetAdmin,
   parseSetDisabled,
   parseUidOnly,
 } from "./validate.ts";
@@ -93,10 +92,6 @@ describe("mutations", () => {
     rejects(() => parseDeleteUser({ uid: UID }));
     rejects(() => parseDeleteUser({ uid: UID, confirm: "" }));
     rejects(() => parseDeleteUser({ uid: UID, confirm: "a@b.co", reason: 1 }));
-  });
-  test("setAdmin", () => {
-    expect(parseSetAdmin({ uid: UID, admin: false })).toEqual({ uid: UID, admin: false, reason: null });
-    rejects(() => parseSetAdmin({ uid: UID, admin: 1 }));
   });
 });
 

@@ -6,7 +6,7 @@ export const copy = {
 
   signIn: {
     title: "Admin console",
-    body: "Restricted area. Sign in with the Google account that holds admin rights.",
+    body: "Restricted area. Sign in with a Google account listed in the server's admin allowlist.",
     button: "Sign in with Google",
     working: "Waiting for Google…",
     denied: (email?: string) =>
@@ -88,11 +88,9 @@ export const copy = {
     actions: "Actions",
     disable: "Disable account",
     enable: "Enable account",
-    makeAdmin: "Make admin",
-    removeAdmin: "Remove admin",
     delete: "Delete account and data",
-    selfNote: "This is your account. You cannot disable, delete or change admin rights on yourself.",
-    adminNote: "Admins can't be disabled or deleted. Remove admin rights first.",
+    selfNote: "This is your account. You cannot disable or delete it.",
+    adminNote: "This account is an admin (its email is in ADMIN_ALLOWED_EMAILS), so it can't be disabled or deleted here. Remove it from the secret and redeploy the functions first.",
     copy: "Copy",
     copied: "Copied",
   },
@@ -109,13 +107,6 @@ export const copy = {
     enableTitle: "Enable account",
     enableBody: (email: string) => `${email} will be able to sign in again.`,
     enableConfirm: "Enable",
-    grantTitle: "Grant admin rights",
-    grantBody: (email: string) =>
-      `${email} will be able to see every user and disable or delete accounts. Only do this for people you fully trust.`,
-    grantConfirm: "Make admin",
-    revokeTitle: "Remove admin rights",
-    revokeBody: (email: string) => `${email} loses admin access immediately and is signed out of all sessions.`,
-    revokeConfirm: "Remove admin",
     deleteTitle: "Delete account permanently",
     deleteBody: "This deletes the Firebase account and every arc, habit and check-in. It cannot be undone.",
     deleteTypeLabel: (email: string) => `Type ${email} to confirm`,
@@ -141,8 +132,6 @@ export const copy = {
       "user.disable": "Disabled",
       "user.enable": "Enabled",
       "user.delete": "Deleted",
-      "admin.grant": "Granted admin",
-      "admin.revoke": "Removed admin",
       unknown: "Unknown",
     },
     ok: "ok",
@@ -154,8 +143,6 @@ export const copy = {
     disabled: "Account disabled.",
     enabled: "Account enabled.",
     deleted: "Account and data deleted.",
-    granted: "Admin rights granted.",
-    revoked: "Admin rights removed.",
   },
 
   errors: {
@@ -170,7 +157,7 @@ export const copy = {
       unauthenticated: "Your session expired.",
       "failed-precondition": "This action isn't allowed right now.",
       "resource-exhausted": "Too many requests. Wait a minute.",
-      aborted: "Your admin rights changed during this action. Nothing was changed.",
+      aborted: "The action was interrupted. Nothing was changed.",
       internal: "Server error. Try again.",
       unavailable: "Service unavailable. Try again.",
       "deadline-exceeded": "The request timed out.",

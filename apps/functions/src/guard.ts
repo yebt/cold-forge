@@ -1,11 +1,16 @@
 import { AdminError } from "./errors.ts";
 import type { AuthUser } from "./ports.ts";
 
+/**
+ * Who is an admin: exactly the accounts whose email is in `ADMIN_ALLOWED_EMAILS` (a Secret Manager
+ * secret), signed in with Google, with a verified email. There is no custom claim and no other way
+ * to become an admin: adding or removing someone means changing the secret and redeploying.
+ */
+
 /** The subset of a verified Firebase ID token (`request.auth`) the guard reads. */
 export interface AuthContext {
   uid: string;
   token: {
-    admin?: unknown;
     email?: unknown;
     email_verified?: unknown;
     auth_time?: unknown;
@@ -15,66 +20,67 @@ export interface AuthContext {
 }
 
 export interface GuardConfig {
-  /**
-   * Lower-cased emails allowed to act as admin, on top of the claim. Empty = every admin call is
-   * refused (fail closed) unless `allowAnyAdmin`.
-   */
+  /** Normalized (trimmed, lower-cased) admin emails. Empty = every admin call is refused (fail closed). */
   allowedEmails: readonly string[];
-  /** Explicit opt-out of the allowlist (ADMIN_ALLOW_ANY_ADMIN=true, or the emulator). */
-  allowAnyAdmin: boolean;
-  /** Require the session to come from Google sign-in (default true). */
-  requireGoogleProvider: boolean;
 }
 
 export interface Actor {
   uid: string;
+  /** Normalized email (also the allowlist key). */
   email: string;
   /** Seconds since epoch when the user last actually signed in (ID token `auth_time`). */
   authTime: number;
 }
 
+/** Trim + lower-case. Every comparison against the allowlist goes through this. */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/** True when `email` (any case/whitespace) is in the normalized allowlist. */
+export function isAllowlisted(email: string | null | undefined, allowedEmails: readonly string[]): boolean {
+  if (typeof email !== "string") return false;
+  const normalized = normalizeEmail(email);
+  return normalized !== "" && allowedEmails.includes(normalized);
+}
+
+const denied = () => new AdminError("permission-denied", "Not authorized.");
+
 /**
- * Stage 1, pure and I/O free: the verified ID token must carry `admin: true`, a verified email,
- * and (by default) a Google sign-in. Runs before anything else so non-admins cost nothing.
+ * Stage 1, pure and I/O free: a verified email, a Google sign-in, and that email in the allowlist.
+ * Runs before anything else so non-admins cost nothing. Any `admin` custom claim is ignored.
  */
 export function requireAdmin(auth: AuthContext | undefined | null, config: GuardConfig): Actor {
   if (!auth || typeof auth.uid !== "string" || !auth.token) {
     throw new AdminError("unauthenticated", "Sign in required.");
   }
   const { token } = auth;
-  if (token.admin !== true) throw new AdminError("permission-denied", "Not authorized.");
-  if (token.email_verified !== true || typeof token.email !== "string" || token.email === "") {
-    throw new AdminError("permission-denied", "Not authorized.");
+  if (token.email_verified !== true || typeof token.email !== "string" || normalizeEmail(token.email) === "") {
+    throw denied();
   }
-  if (config.requireGoogleProvider && token.firebase?.sign_in_provider !== "google.com") {
-    throw new AdminError("permission-denied", "Not authorized.");
-  }
-  const email = token.email.toLowerCase();
+  if (token.firebase?.sign_in_provider !== "google.com") throw denied();
   if (config.allowedEmails.length === 0) {
-    // Fail closed: a deploy that forgot the allowlist must not hand admin powers to every claim holder.
-    if (!config.allowAnyAdmin) {
-      throw new AdminError("permission-denied", "Admin access is not configured.", "allowlist-not-configured");
-    }
-  } else if (!config.allowedEmails.includes(email)) {
-    throw new AdminError("permission-denied", "Not authorized.");
+    // Fail closed: a deploy without the secret must not hand admin powers to anyone.
+    throw new AdminError("permission-denied", "Admin access is not configured.", "allowlist-not-configured");
   }
+  const email = normalizeEmail(token.email);
+  if (!config.allowedEmails.includes(email)) throw denied();
   const authTime = typeof token.auth_time === "number" && Number.isFinite(token.auth_time) ? token.auth_time : 0;
   return { uid: auth.uid, email, authTime };
 }
 
 /**
- * Stage 2, against the live Auth record: ID tokens stay valid for up to an hour after an admin is
- * demoted, disabled or has their sessions revoked. Re-reading the account on every call closes
- * that window (the same check `verifyIdToken(token, true)` would do, plus the claim itself).
+ * Stage 2, against the live Auth record: ID tokens stay valid for up to an hour after an account
+ * is disabled, has its sessions revoked or changes email. Re-reading the account on every call
+ * closes that window (what `verifyIdToken(token, true)` would do, plus the email checks).
  */
-export function assertLiveAdmin(actor: Actor, live: AuthUser | null): void {
-  if (!live || live.uid !== actor.uid) throw new AdminError("permission-denied", "Not authorized.");
-  if (live.disabled || !live.admin) throw new AdminError("permission-denied", "Not authorized.");
-  if ((live.email ?? "").toLowerCase() !== actor.email) {
-    throw new AdminError("permission-denied", "Not authorized.");
-  }
+export function assertLiveAdmin(actor: Actor, live: AuthUser | null, config: GuardConfig): void {
+  if (!live || live.uid !== actor.uid || live.disabled) throw denied();
+  if (!live.emailVerified || normalizeEmail(live.email ?? "") !== actor.email) throw denied();
+  if (!isAllowlisted(live.email, config.allowedEmails)) throw denied();
   if (live.tokensValidAfter) {
     const validAfterMs = Date.parse(live.tokensValidAfter);
+    // Require tokensValidAfterTime <= auth_time.
     if (Number.isFinite(validAfterMs) && actor.authTime * 1000 < validAfterMs) {
       throw new AdminError("unauthenticated", "Session revoked. Sign in again.", "session-revoked");
     }
@@ -95,11 +101,23 @@ export function refuseSelf(actor: Actor, targetUid: string, what: string): void 
   }
 }
 
-/** Parses `ADMIN_ALLOWED_EMAILS` (comma or whitespace separated). */
+/** Admin accounts (email in the allowlist) can't be disabled or deleted from the panel. */
+export function refuseAdminTarget(target: AuthUser, config: GuardConfig, what: string): void {
+  if (isAllowlisted(target.email, config.allowedEmails)) {
+    throw new AdminError(
+      "failed-precondition",
+      `Admins can't be ${what}. Remove the email from ADMIN_ALLOWED_EMAILS and redeploy first.`,
+      "target-is-admin",
+    );
+  }
+}
+
+/** Parses `ADMIN_ALLOWED_EMAILS` (comma or whitespace separated) into normalized, unique emails. */
 export function parseEmailList(raw: string | undefined): string[] {
   if (!raw) return [];
-  return raw
+  const emails = raw
     .split(/[\s,]+/)
-    .map((e) => e.trim().toLowerCase())
+    .map(normalizeEmail)
     .filter((e) => e.length > 0);
+  return [...new Set(emails)];
 }

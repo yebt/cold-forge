@@ -55,7 +55,6 @@ export function toAuthUser(record: UserRecord): AuthUser {
     lastSignIn: iso(record.metadata?.lastSignInTime),
     lastRefresh: iso(record.metadata?.lastRefreshTime),
     providers: (record.providerData ?? []).map((p) => p.providerId).filter((p): p is string => typeof p === "string"),
-    admin: record.customClaims?.admin === true,
     tokensValidAfter: iso(record.tokensValidAfterTime),
   };
 }
@@ -107,13 +106,6 @@ export function createAuthPort(auth: Auth): AuthPort {
     async revokeRefreshTokens(uid) {
       await auth.revokeRefreshTokens(safeUid(uid));
     },
-    async setAdminClaim(uid, admin) {
-      const record = await auth.getUser(safeUid(uid));
-      const claims: Record<string, unknown> = { ...(record.customClaims ?? {}) };
-      if (admin) claims.admin = true;
-      else delete claims.admin;
-      await auth.setCustomUserClaims(uid, Object.keys(claims).length > 0 ? claims : null);
-    },
     async deleteUser(uid) {
       try {
         await auth.deleteUser(safeUid(uid));
@@ -144,7 +136,8 @@ export function toProfileView(doc: DocumentData): ProfileView {
   };
 }
 
-const AUDIT_ACTIONS = new Set(["user.view", "user.disable", "user.enable", "user.delete", "admin.grant", "admin.revoke"]);
+/** Entries written by older versions (e.g. the removed `admin.grant` / `admin.revoke`) read as `unknown`. */
+const AUDIT_ACTIONS = new Set(["user.view", "user.disable", "user.enable", "user.delete"]);
 
 export function toAuditEntry(id: string, doc: DocumentData): AuditEntry {
   return {

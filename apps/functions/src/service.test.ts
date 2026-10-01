@@ -11,15 +11,18 @@ let alice: AuthUser;
 let bob: AuthUser;
 let carol: AuthUser;
 
+/** alice and carol are admins because their emails are in the allowlist (messy on purpose). */
+const ALLOWED = [" Alice@Example.com", "CAROL@example.com "];
+
 beforeEach(() => {
-  alice = user("alice", { admin: true });
+  alice = user("alice");
   bob = user("bob", { createdAt: "2026-09-28T00:00:00.000Z" });
-  carol = user("carol", { admin: true, createdAt: "2026-09-10T00:00:00.000Z" });
+  carol = user("carol", { createdAt: "2026-09-10T00:00:00.000Z" });
   auth = new FakeAuth([alice, bob, carol]);
   data = new FakeData();
   data.counts.set("bob", { arcs: 1, habits: 4, checkIns: 30 });
   data.profiles.set("bob", { displayName: "Bob", locale: "es", currentArcId: "arc1", createdAt: null, updatedAt: "2026-09-30T00:00:00.000Z" });
-  svc = createAdminService({ auth, data, now: () => NOW, config: { allowAnyAdmin: true } });
+  svc = createAdminService({ auth, data, now: () => NOW, config: { allowedEmails: ALLOWED } });
 });
 
 async function failure(promise: Promise<unknown>): Promise<AdminError> {
@@ -33,14 +36,35 @@ async function failure(promise: Promise<unknown>): Promise<AdminError> {
 }
 
 describe("authorization", () => {
-  test("non-admins are refused before any I/O", async () => {
-    const err = await failure(svc.listUsers(adminCtx(bob, { admin: false }), {}));
+  test("a verified Google user outside the allowlist is refused before any I/O", async () => {
+    const err = await failure(svc.listUsers(adminCtx(bob), {}));
     expect(err.code).toBe("permission-denied");
     expect(data.rate.size).toBe(0);
   });
 
-  test("an admin whose claim was removed is refused despite an old token", async () => {
-    auth.users.set("alice", { ...alice, admin: false });
+  test("the admin claim grants nothing", async () => {
+    expect((await failure(svc.stats(adminCtx(bob, { admin: true }), {}))).code).toBe("permission-denied");
+  });
+
+  test("allowlisted but unverified, or not a Google sign-in, is refused", async () => {
+    expect((await failure(svc.stats(adminCtx(alice, { email_verified: false }), {}))).code).toBe("permission-denied");
+    expect((await failure(svc.stats(adminCtx(alice, { firebase: { sign_in_provider: "password" } }), {}))).code).toBe("permission-denied");
+    expect(data.rate.size).toBe(0);
+  });
+
+  test("email case and whitespace don't matter", async () => {
+    expect((await svc.whoAmI(adminCtx(alice, { email: "ALICE@example.COM" }), {})).email).toBe("alice@example.com");
+  });
+
+  test("a stale token is refused once the account is disabled", async () => {
+    auth.users.set("alice", { ...alice, disabled: true });
+    expect((await failure(svc.stats(adminCtx(alice), {}))).code).toBe("permission-denied");
+  });
+
+  test("a token is refused once the live account's email no longer matches or is unverified", async () => {
+    auth.users.set("alice", { ...alice, email: "alice@elsewhere.com" });
+    expect((await failure(svc.stats(adminCtx(alice), {}))).code).toBe("permission-denied");
+    auth.users.set("alice", { ...alice, emailVerified: false });
     expect((await failure(svc.stats(adminCtx(alice), {}))).code).toBe("permission-denied");
   });
 
@@ -49,6 +73,17 @@ describe("authorization", () => {
     const err = await failure(svc.stats(adminCtx(alice, { auth_time: nowSec - 3600 }), {}));
     expect(err.code).toBe("unauthenticated");
     expect(err.reason).toBe("session-revoked");
+  });
+
+  test("an empty allowlist refuses everyone (fail closed)", async () => {
+    for (const allowedEmails of [[], [" ", ""]]) {
+      const closed = createAdminService({ auth, data, now: () => NOW, config: { allowedEmails } });
+      const err = await failure(closed.stats(adminCtx(alice), {}));
+      expect([err.code, err.reason]).toEqual(["permission-denied", "allowlist-not-configured"]);
+    }
+    const defaults = createAdminService({ auth, data, now: () => NOW });
+    expect((await failure(defaults.whoAmI(adminCtx(alice), {}))).code).toBe("permission-denied");
+    expect(data.rate.size).toBe(0); // refused before any I/O
   });
 
   test("rate limits writes per admin", async () => {
@@ -89,14 +124,17 @@ describe("L5: audit of refusals and sensitive reads", () => {
     expect(data.audit[0]).toMatchObject({ actorUid: "alice", action: "user.view", targetUid: "bob", targetEmail: "bob@example.com", outcome: "ok" });
   });
 
-  test("L6: with no allowlist and no explicit opt-out, every admin call is refused", async () => {
-    const closed = createAdminService({ auth, data, now: () => NOW });
-    const err = await failure(closed.stats(adminCtx(alice), {}));
-    expect([err.code, err.reason]).toEqual(["permission-denied", "allowlist-not-configured"]);
-    expect(data.rate.size).toBe(0); // refused before any I/O
-    const listed = createAdminService({ auth, data, now: () => NOW, config: { allowedEmails: ["alice@example.com"] } });
-    expect((await listed.stats(adminCtx(alice), {})).totalUsers).toBe(3);
-    expect((await failure(listed.stats(adminCtx(carol), {}))).code).toBe("permission-denied");
+});
+
+describe("whoAmI", () => {
+  test("returns the normalized email for an admin, and validates input", async () => {
+    expect(await svc.whoAmI(adminCtx(carol), undefined)).toEqual({ email: "carol@example.com", isAdmin: true });
+    expect((await failure(svc.whoAmI(adminCtx(alice), { x: 1 }))).code).toBe("invalid-argument");
+    expect(data.audit).toEqual([]);
+  });
+  test("non-admins get permission-denied", async () => {
+    expect((await failure(svc.whoAmI(adminCtx(bob), {}))).code).toBe("permission-denied");
+    expect((await failure(svc.whoAmI(undefined, {}))).code).toBe("unauthenticated");
   });
 });
 
@@ -126,8 +164,17 @@ describe("listUsers", () => {
   });
 
   test("never leaks non-https photo URLs", () => {
-    expect(toUserRow(user("x", { photoURL: "javascript:alert(1)" }), null).photoURL).toBeNull();
-    expect(toUserRow(user("x", { photoURL: "https://lh3.googleusercontent.com/a" }), null).photoURL).toBe("https://lh3.googleusercontent.com/a");
+    expect(toUserRow(user("x", { photoURL: "javascript:alert(1)" }), null, []).photoURL).toBeNull();
+    expect(toUserRow(user("x", { photoURL: "https://lh3.googleusercontent.com/a" }), null, []).photoURL).toBe("https://lh3.googleusercontent.com/a");
+  });
+
+  test("isAdmin is computed server-side from the allowlist", async () => {
+    const res = await svc.listUsers(adminCtx(alice), {});
+    expect(res.users.map((u) => [u.uid, u.isAdmin])).toEqual([
+      ["alice", true],
+      ["bob", false],
+      ["carol", true],
+    ]);
   });
 });
 
@@ -162,12 +209,17 @@ describe("setDisabled", () => {
     await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: false, reason: "appeal ok" });
     expect(data.blocked.get("bob")).toBe("quota");
   });
+  test("re-enabling an allowlisted account is allowed (only disable/delete are refused)", async () => {
+    auth.users.set("carol", { ...carol, disabled: true });
+    const res = await svc.setDisabled(adminCtx(alice), { uid: "carol", disabled: false, reason: "restore" });
+    expect(res.user).toMatchObject({ disabled: false, isAdmin: true });
+  });
   test("enabling does not revoke", async () => {
     await svc.setDisabled(adminCtx(alice), { uid: "bob", disabled: false, reason: "appeal ok" });
     expect(auth.calls).toEqual(["setDisabled:bob:false"]);
     expect(data.audit[0]?.action).toBe("user.enable");
   });
-  test("L5: refuses self and admins, and audits the refusals", async () => {
+  test("L5: refuses self and allowlisted accounts, and audits the refusals", async () => {
     expect((await failure(svc.setDisabled(adminCtx(alice), { uid: "alice", disabled: true, reason: "oops" }))).reason).toBe("self-action");
     expect((await failure(svc.setDisabled(adminCtx(alice), { uid: "carol", disabled: true, reason: "oops" }))).reason).toBe("target-is-admin");
     expect(auth.calls).toEqual([]);
@@ -202,7 +254,7 @@ describe("deleteUser", () => {
     expect(auth.users.has("bob")).toBe(false);
   });
 
-  test("refuses self, admins and stale sign-ins", async () => {
+  test("refuses self, allowlisted accounts and stale sign-ins", async () => {
     expect((await failure(svc.deleteUser(adminCtx(alice), { uid: "alice", confirm: "alice@example.com" }))).reason).toBe("self-action");
     expect((await failure(svc.deleteUser(adminCtx(alice), { uid: "carol", confirm: "carol@example.com" }))).reason).toBe("target-is-admin");
     const stale = adminCtx(alice, { auth_time: nowSec - 3 * 3600 });
@@ -220,43 +272,6 @@ describe("deleteUser", () => {
     await expect(svc.deleteUser(adminCtx(alice), { uid: "bob", confirm: "bob@example.com" })).rejects.toThrow("boom");
     expect(data.audit[0]).toMatchObject({ action: "user.delete", outcome: "error" });
     expect(auth.users.get("bob")?.disabled).toBe(true);
-  });
-});
-
-describe("setAdmin", () => {
-  test("grants and revokes (revocation kills sessions)", async () => {
-    await svc.setAdmin(adminCtx(alice), { uid: "bob", admin: true });
-    expect(auth.users.get("bob")?.admin).toBe(true);
-    await svc.setAdmin(adminCtx(alice), { uid: "bob", admin: false, reason: "rotation" });
-    expect(auth.users.get("bob")?.admin).toBe(false);
-    expect(auth.calls).toEqual(["setAdmin:bob:true", "setAdmin:bob:false", "revoke:bob"]);
-    expect(data.audit.map((a) => a.action)).toEqual(["admin.revoke", "admin.grant"]);
-  });
-
-  test("refuses changing your own rights (so one admin always remains)", async () => {
-    const err = await failure(svc.setAdmin(adminCtx(alice), { uid: "alice", admin: false }));
-    expect(err.reason).toBe("self-action");
-    expect(auth.users.get("alice")?.admin).toBe(true);
-  });
-
-  test("refuses disabled or unverified targets", async () => {
-    auth.users.set("bob", { ...bob, emailVerified: false });
-    expect((await failure(svc.setAdmin(adminCtx(alice), { uid: "bob", admin: true }))).code).toBe("failed-precondition");
-  });
-
-  test("rolls back if the actor was demoted concurrently", async () => {
-    auth.onSetAdminClaim = (uid, admin) => {
-      if (uid === "carol" && !admin) auth.users.set("alice", { ...auth.users.get("alice")!, admin: false });
-    };
-    const err = await failure(svc.setAdmin(adminCtx(alice), { uid: "carol", admin: false }));
-    expect(err.code).toBe("aborted");
-    expect(auth.users.get("carol")?.admin).toBe(true);
-    expect(data.audit[0]?.outcome).toBe("error");
-  });
-
-  test("requires a recent sign-in", async () => {
-    const stale = adminCtx(alice, { auth_time: nowSec - 3 * 3600 });
-    expect((await failure(svc.setAdmin(stale, { uid: "bob", admin: true }))).reason).toBe("recent-login-required");
   });
 });
 

@@ -3,3 +3,4 @@ lib/
 !.env.coldforge-work
 .env.local
 .secret.local
+!.env.demo-coldforge

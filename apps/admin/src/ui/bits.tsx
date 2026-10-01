@@ -29,11 +29,12 @@ export function Avatar({ name, email, photo, size = 32 }: { name: string | null;
   );
 }
 
-export function StatusBadges({ disabled, admin, emailVerified }: { disabled: boolean; admin: boolean; emailVerified: boolean }) {
+/** `isAdmin`: the account's email is in ADMIN_ALLOWED_EMAILS (computed by the server). */
+export function StatusBadges({ disabled, isAdmin, emailVerified }: { disabled: boolean; isAdmin: boolean; emailVerified: boolean }) {
   return (
     <span className="badges">
       {disabled ? <span className="badge badge-danger">{copy.users.disabled}</span> : <span className="badge badge-ok">{copy.users.active}</span>}
-      {admin && <span className="badge badge-ember">{copy.users.admin}</span>}
+      {isAdmin && <span className="badge badge-ember">{copy.users.admin}</span>}
       {!emailVerified && <span className="badge">{copy.users.unverified}</span>}
     </span>
   );

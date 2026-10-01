@@ -26,45 +26,59 @@ const ADMIN_ORIGIN = defineString("ADMIN_ORIGIN", {
   description: "Origin of the admin panel allowed by CORS, e.g. https://admin.example.com",
   input: { text: { validationRegex: "^https?://[A-Za-z0-9.-]+(:[0-9]+)?$", validationErrorMessage: "Origin like https://admin.example.com" } },
 });
-const ENFORCE_APP_CHECK = defineBoolean("ADMIN_ENFORCE_APP_CHECK", {
+/**
+ * Declared so the CLI knows and validates the param (boolean, default false). Its value is read
+ * from process.env below instead of passing the param to `enforceAppCheck`: firebase-functions
+ * 7.4 evaluates an `enforceAppCheck` Expression with `.value()` while the module loads (onCall),
+ * which prints "params.ADMIN_ENFORCE_APP_CHECK.value() invoked during function deployment" on
+ * every deploy. `enforceAppCheck` is runtime-only (not part of the deploy manifest), and the CLI
+ * puts the .env value in process.env both at deploy and at runtime, so reading it here is exactly
+ * what BooleanParam.value() does (`=== "true"`, otherwise false) without the warning.
+ */
+defineBoolean("ADMIN_ENFORCE_APP_CHECK", {
   default: false,
   description: "Reject callable requests without a valid App Check token (requires App Check in apps/admin).",
 });
+const ENFORCE_APP_CHECK = process.env.ADMIN_ENFORCE_APP_CHECK === "true";
 /**
- * The owner's email must not be committed to this public repo, so the allowlist is a Secret
- * Manager secret (deployed, never in git): `firebase functions:secrets:set ADMIN_ALLOWED_EMAILS`.
- * Empty (or missing) in production = every admin call is refused, unless ADMIN_ALLOW_ANY_ADMIN.
+ * The allowlist IS the admin role: a caller is an admin iff their verified Google email is in this
+ * secret (comma-separated). It names the owner and this repo is public, so it lives in Secret
+ * Manager, never in git: `firebase functions:secrets:set ADMIN_ALLOWED_EMAILS`, then redeploy the
+ * functions. Secrets are read when an instance starts, so a redeploy (or new instances) picks up a
+ * change. Empty or missing = every admin call is refused (fail closed).
  */
 const ALLOWED_EMAILS = defineSecret("ADMIN_ALLOWED_EMAILS");
-const ALLOW_ANY_ADMIN = defineBoolean("ADMIN_ALLOW_ANY_ADMIN", {
-  default: false,
-  description: "true = any verified Google account with the admin claim may use admin powers (no email allowlist). Not recommended.",
-});
-/** The Functions emulator (local tests) has no Secret Manager: there an empty allowlist means "any admin". */
 const IN_EMULATOR = process.env.FUNCTIONS_EMULATOR === "true";
 
 initializeApp();
 
+/**
+ * Production: the secret only. Functions emulator only: when the secret has no value (no
+ * `.secret.local`), `ADMIN_EMULATOR_ALLOWED_EMAILS` from `.env.demo-coldforge` / `.env.local` is
+ * used instead. It is ignored outside the emulator, so it can never grant anything in production.
+ */
 function readAllowlist(): string[] {
+  let raw = "";
   try {
-    return parseEmailList(ALLOWED_EMAILS.value());
+    raw = ALLOWED_EMAILS.value();
   } catch {
-    return []; // secret not bound / not set: fail closed below
+    raw = ""; // secret not bound / not set: fail closed below
   }
+  if (raw.trim() === "" && IN_EMULATOR) raw = process.env.ADMIN_EMULATOR_ALLOWED_EMAILS ?? "";
+  return parseEmailList(raw);
 }
 
 let service: AdminService | undefined;
 function getService(): AdminService {
   if (!service) {
     const allowedEmails = readAllowlist();
-    const allowAnyAdmin = ALLOW_ANY_ADMIN.value() || IN_EMULATOR;
-    if (allowedEmails.length === 0 && !allowAnyAdmin) {
+    if (allowedEmails.length === 0) {
       logger.error("ADMIN_ALLOWED_EMAILS is empty: every admin call is refused (set the secret, see apps/functions/README.md)");
     }
     service = createAdminService({
       auth: createAuthPort(getAuth()),
       data: createDataPort(getFirestore()),
-      config: { allowedEmails, allowAnyAdmin },
+      config: { allowedEmails },
     });
   }
   return service;
@@ -112,11 +126,11 @@ function adminCallable(action: string, handler: Handler) {
   });
 }
 
+export const adminWhoAmI = adminCallable("whoAmI", (s, a, d) => s.whoAmI(a, d));
 export const adminListUsers = adminCallable("listUsers", (s, a, d) => s.listUsers(a, d));
 export const adminGetUser = adminCallable("getUser", (s, a, d) => s.getUser(a, d));
 export const adminSetDisabled = adminCallable("setDisabled", (s, a, d) => s.setDisabled(a, d));
 export const adminDeleteUser = adminCallable("deleteUser", (s, a, d) => s.deleteUser(a, d));
-export const adminSetAdmin = adminCallable("setAdmin", (s, a, d) => s.setAdmin(a, d));
 export const adminStats = adminCallable("stats", (s, a, d) => s.stats(a, d));
 export const adminListAuditLog = adminCallable("listAuditLog", (s, a, d) => s.listAuditLog(a, d));
 

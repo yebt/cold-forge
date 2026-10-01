@@ -38,5 +38,8 @@ bunx firebase-tools@15.32.1 emulators:exec --only auth,firestore --project demo-
 - **Modo invitado (por defecto):** todo vive en el dispositivo; Firebase ni se descarga. Exporta/importa tus datos en JSON.
 - **Con cuenta (Google):** sincronización en tiempo real con Firestore, registro por registro, "gana el más reciente".
 - **Seguridad:** `firebase/firestore.rules` (cada usuario solo ve lo suyo, validación estricta, cuotas y bloqueo inmediato),
-  admin solo vía Cloud Functions con allowlist en Secret Manager. Detalles en [`docs/firebase.md`](docs/firebase.md).
-- **Despliegue:** Cloudflare Pages + Firebase + APK en GitHub Releases. Paso a paso en [`docs/deploy.md`](docs/deploy.md).
+  admin solo vía Cloud Functions: es admin quien tenga su email (Google, verificado) en el secreto
+  `ADMIN_ALLOWED_EMAILS` de Secret Manager, sin custom claims. Detalles en [`docs/firebase.md`](docs/firebase.md).
+- **Despliegue:** Cloudflare Pages + APK en GitHub Releases; las reglas de Firestore y las Cloud Functions
+  se despliegan solas desde GitHub Actions en cada push a `main` (sin claves, Workload Identity Federation).
+  Paso a paso en [`docs/deploy.md`](docs/deploy.md).

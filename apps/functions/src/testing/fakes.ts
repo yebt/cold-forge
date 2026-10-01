@@ -21,17 +21,16 @@ export function user(uid: string, patch: Partial<AuthUser> = {}): AuthUser {
     lastSignIn: "2026-09-30T00:00:00.000Z",
     lastRefresh: null,
     providers: ["google.com"],
-    admin: false,
     tokensValidAfter: "2026-01-01T00:00:00.000Z",
     ...patch,
   };
 }
 
+/** A Google sign-in ID token for `u` (admin or not depends only on the allowlist). */
 export function adminCtx(u: AuthUser, tokenPatch: Partial<AuthContext["token"]> = {}): AuthContext {
   return {
     uid: u.uid,
     token: {
-      admin: true,
       email: u.email ?? undefined,
       email_verified: true,
       auth_time: nowSec - 60,
@@ -44,8 +43,6 @@ export function adminCtx(u: AuthUser, tokenPatch: Partial<AuthContext["token"]> 
 export class FakeAuth implements AuthPort {
   users = new Map<string, AuthUser>();
   calls: string[] = [];
-  /** Hook to simulate concurrent changes inside setAdminClaim. */
-  onSetAdminClaim: ((uid: string, admin: boolean) => void) | null = null;
 
   constructor(users: AuthUser[]) {
     for (const u of users) this.users.set(u.uid, u);
@@ -82,11 +79,6 @@ export class FakeAuth implements AuthPort {
   async revokeRefreshTokens(uid: string) {
     this.calls.push(`revoke:${uid}`);
     this.patch(uid, { tokensValidAfter: NOW.toISOString() });
-  }
-  async setAdminClaim(uid: string, admin: boolean) {
-    this.calls.push(`setAdmin:${uid}:${admin}`);
-    this.patch(uid, { admin });
-    this.onSetAdminClaim?.(uid, admin);
   }
   async deleteUser(uid: string) {
     this.calls.push(`deleteUser:${uid}`);

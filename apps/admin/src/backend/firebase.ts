@@ -13,7 +13,7 @@ import {
   type User,
 } from "firebase/auth";
 import { connectFunctionsEmulator, getFunctions, httpsCallable, FunctionsError } from "firebase/functions";
-import type { AdminErrorDetails } from "./types.ts";
+import type { AdminErrorDetails, WhoAmIResponse } from "./types.ts";
 import { CallError, type AuthState, type Backend } from "./types.ts";
 
 export interface FirebaseWebConfig {
@@ -78,46 +78,77 @@ export function createFirebaseBackend(config: FirebaseWebConfig): Backend {
 
   let state: AuthState = { status: "loading" };
   let pendingNotice: "denied" | "expired" | "idle" | "error" | undefined;
+  let pendingEmail: string | undefined;
+  /** Bumped on every auth change, so a slow adminWhoAmI answer for an older user is ignored. */
+  let generation = 0;
   const listeners = new Set<(s: AuthState) => void>();
   const emit = (next: AuthState) => {
     state = next;
     for (const l of listeners) l(state);
   };
 
-  /** Only a fresh token with `admin: true` and a verified email gets past the sign-in screen. */
-  async function evaluate(user: User | null) {
-    if (!user) {
-      emit({ status: "signed-out", notice: pendingNotice });
-      pendingNotice = undefined;
-      return;
-    }
+  async function call(name: string, data: unknown): Promise<unknown> {
     try {
-      const token = await user.getIdTokenResult(true);
-      const isAdmin = token.claims.admin === true && user.emailVerified && token.signInProvider === "google.com";
-      if (!isAdmin) {
-        pendingNotice = "denied";
-        await signOut(auth);
-        return;
+      const fn = httpsCallable(functions, name, { timeout: 120_000 });
+      return (await fn(data)).data;
+    } catch (error) {
+      if (error instanceof FunctionsError) {
+        const details = (error.details ?? {}) as AdminErrorDetails;
+        throw new CallError(error.code.replace(/^functions\//, ""), error.message, details.reason);
       }
-      emit({
-        status: "ready",
-        session: { uid: user.uid, email: user.email ?? "", displayName: user.displayName, photoURL: user.photoURL },
-      });
-    } catch {
-      pendingNotice = "error";
-      await signOut(auth);
+      throw new CallError("internal", "Network error. Try again.", undefined);
     }
   }
 
-  // onIdTokenChanged also fires on token refresh, so a claim removed server-side is noticed within
-  // the hour even if the panel stays open (the server refuses it immediately anyway).
+  /**
+   * The server decides who is an admin (verified Google email in ADMIN_ALLOWED_EMAILS plus a live
+   * account check): the panel only asks it. No claim or allowlist is evaluated in the browser.
+   */
+  async function whoAmI(): Promise<{ ok: true; email: string } | { ok: false; denied: boolean }> {
+    try {
+      const res = (await call("adminWhoAmI", {})) as WhoAmIResponse | null;
+      return res?.isAdmin === true ? { ok: true, email: res.email } : { ok: false, denied: true };
+    } catch (error) {
+      const denied = error instanceof CallError && (error.code === "permission-denied" || error.code === "unauthenticated");
+      return { ok: false, denied };
+    }
+  }
+
+  async function deny(notice: "denied" | "error", email: string | null) {
+    pendingNotice = notice;
+    pendingEmail = notice === "denied" ? (email ?? undefined) : undefined;
+    await signOut(auth);
+  }
+
+  /** After sign-in (or a restored session): only a server-confirmed admin gets past the sign-in screen. */
+  async function evaluate(user: User | null) {
+    const gen = ++generation;
+    if (!user) {
+      emit({ status: "signed-out", notice: pendingNotice, email: pendingEmail });
+      pendingNotice = undefined;
+      pendingEmail = undefined;
+      return;
+    }
+    const res = await whoAmI();
+    if (gen !== generation) return;
+    if (!res.ok) {
+      await deny(res.denied ? "denied" : "error", user.email);
+      return;
+    }
+    emit({
+      status: "ready",
+      session: { uid: user.uid, email: res.email, displayName: user.displayName, photoURL: user.photoURL },
+    });
+  }
+
+  // onIdTokenChanged also fires on every token refresh (hourly), so an admin who was removed from
+  // the allowlist, disabled or revoked is signed out even if the panel stays open (the server
+  // refuses their calls immediately anyway). A transient error on a refresh signs nobody out.
   onIdTokenChanged(auth, (user) => {
     if (user && state.status === "ready" && state.session.uid === user.uid) {
-      void user.getIdTokenResult().then((t) => {
-        if (t.claims.admin !== true) {
-          pendingNotice = "denied";
-          void signOut(auth);
-        }
+      const gen = generation;
+      void whoAmI().then((res) => {
+        if (gen === generation && !res.ok && res.denied) void deny("denied", user.email);
       });
       return;
     }
@@ -136,6 +167,7 @@ export function createFirebaseBackend(config: FirebaseWebConfig): Backend {
     },
     async signOut(notice) {
       pendingNotice = notice;
+      pendingEmail = undefined;
       await signOut(auth);
     },
     async reauthenticate() {
@@ -144,17 +176,7 @@ export function createFirebaseBackend(config: FirebaseWebConfig): Backend {
       await auth.currentUser.getIdToken(true);
     },
     async call(name, data) {
-      try {
-        const fn = httpsCallable(functions, name, { timeout: 120_000 });
-        const result = await fn(data);
-        return result.data as never;
-      } catch (error) {
-        if (error instanceof FunctionsError) {
-          const details = (error.details ?? {}) as AdminErrorDetails;
-          throw new CallError(error.code.replace(/^functions\//, ""), error.message, details.reason);
-        }
-        throw new CallError("internal", "Network error. Try again.", undefined);
-      }
+      return (await call(name, data)) as never;
     },
   };
 }

@@ -50,9 +50,14 @@ Rules: `firebase/firestore.rules`, tested in `firebase/rules.test.ts` (emulator)
 
 ## Server side (Cloud Functions, `apps/functions`)
 
-- Admin callables, guarded by the `admin: true` custom claim **and** the `ADMIN_ALLOWED_EMAILS` secret
-  (empty → every admin call is refused unless `ADMIN_ALLOW_ANY_ADMIN=true`): list/search users,
-  disable/enable, delete (Auth user + all Firestore data), basic stats. Every mutation, every refused
+- Admin callables: list/search users, disable/enable, delete (Auth user + all Firestore data), basic
+  stats, `adminWhoAmI`. **The allowlist is the admin role:** a caller is an admin iff the token has a
+  verified email, a Google sign-in, and that email (trimmed, lower-cased) is in the
+  `ADMIN_ALLOWED_EMAILS` Secret Manager secret; every call also re-reads the caller's Auth record
+  (enabled, not revoked, same verified email, still listed). No custom claims; empty secret → every
+  admin call is refused. Admins are managed with `firebase functions:secrets:set ADMIN_ALLOWED_EMAILS`
+  + a functions redeploy (secrets are read at instance start). Allowlisted accounts can't be
+  disabled or deleted from the panel, and nobody can act on their own account. Every mutation, every refused
   mutation attempt (outcome `refused` + reason code) and every single-account view (`user.view`) is
   written to `adminAuditLog/{id}`. List pages are not audited.
 - Disabling a user writes `blocked/{uid}` {reason: "disabled"} (Firestore access ends at once, not when
@@ -65,7 +70,8 @@ Rules: `firebase/firestore.rules`, tested in `firebase/rules.test.ts` (emulator)
   `count()` for accounts active in the last 2 days plus the least-recently-counted ones (everyone at
   least weekly), blocks anyone over `QUOTAS.checkIns` and logs accounts that gained > 5000 check-in
   documents since the previous count.
-- `scripts/set-admin.ts`: grants/revokes the admin claim using local Application Default Credentials.
+- Deploys: `.github/workflows/firebase-deploy.yml` (keyless, Workload Identity Federation) on every
+  push to `main` touching rules or functions; see `docs/deploy.md`.
 
 ## Hosting (Cloudflare Pages)
 
@@ -73,4 +79,4 @@ Rules: `firebase/firestore.rules`, tested in `firebase/rules.test.ts` (emulator)
 | --- | --- | --- |
 | landing | `apps/landing` (`dist`) | `coldforge.work` |
 | app (PWA) | `apps/app` (`dist`) | `app.coldforge.work` |
-| admin | `apps/admin` (`dist`) | `admin.coldforge.work` behind Cloudflare Access |
+| admin | `apps/admin` (`dist`) | `admin.coldforge.work` (Cloudflare Access recommended, optional) |

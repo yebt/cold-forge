@@ -151,7 +151,7 @@ export function Users({ selfUid }: { selfUid: string }) {
                         {u.uid === selfUid && <span className="you"> · you</span>}
                       </span>
                       <span className="mobile-status">
-                        <StatusBadges disabled={u.disabled} admin={u.admin} emailVerified={u.emailVerified} />
+                        <StatusBadges disabled={u.disabled} isAdmin={u.isAdmin} emailVerified={u.emailVerified} />
                       </span>
                     </span>
                   </button>
@@ -166,7 +166,7 @@ export function Users({ selfUid }: { selfUid: string }) {
                   {formatRelative(u.lastSignIn)}
                 </td>
                 <td className="col-status">
-                  <StatusBadges disabled={u.disabled} admin={u.admin} emailVerified={u.emailVerified} />
+                  <StatusBadges disabled={u.disabled} isAdmin={u.isAdmin} emailVerified={u.emailVerified} />
                 </td>
                 <td className="num col-count">{u.counts ? formatNumber(u.counts.arcs) : "—"}</td>
                 <td className="num col-count">{u.counts ? formatNumber(u.counts.habits) : "—"}</td>
