@@ -11,8 +11,9 @@ interface Particle {
   color: string;
 }
 
-const EMBER = ["#fff7d6", "#fde68a", "#fbbf24", "#f97316", "#fb923c"];
-const ICE = ["#e0f2fe", "#7dd3fc", "#38bdf8"];
+/** Brand palette: hot ember sparks off the anvil, with a few ice flecks (ice → ember). */
+const EMBER = ["#FFF1E4", "#FFD2AE", "#F8B27F", "#F08A4B", "#E0703A"];
+const ICE = ["#EEF3F7", "#B9E0F4", "#7CC4EA"];
 
 let canvas: HTMLCanvasElement | null = null;
 let ctx2d: CanvasRenderingContext2D | null = null;
@@ -84,14 +85,14 @@ export interface BurstOptions {
 }
 
 /** Spark burst from a viewport point (e.g. the center of the tapped button). */
-export function burst(x: number, y: number, { count = 28, power = 1, ice = false }: BurstOptions = {}): void {
+export function burst(x: number, y: number, { count = 28, power = 1, ice = true }: BurstOptions = {}): void {
   if (prefersReducedMotion()) return;
   if (!ensureCanvas()) return;
   for (let i = 0; i < count; i++) {
     // Mostly upward fan, like sparks off an anvil.
     const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.5;
     const speed = (250 + Math.random() * 450) * power;
-    const palette = ice && Math.random() < 0.35 ? ICE : EMBER;
+    const palette = ice && Math.random() < 0.3 ? ICE : EMBER;
     const life = 0.35 + Math.random() * 0.5;
     particles.push({
       x,
@@ -100,7 +101,7 @@ export function burst(x: number, y: number, { count = 28, power = 1, ice = false
       vy: Math.sin(angle) * speed,
       life,
       maxLife: life,
-      size: 1.5 + Math.random() * 2.2,
+      size: 1.4 + Math.random() * 2,
       color: palette[Math.floor(Math.random() * palette.length)]!,
     });
   }
@@ -127,5 +128,5 @@ export function celebrate(): void {
     [w * 0.35, h * 0.3],
     [w * 0.65, h * 0.3],
   ];
-  points.forEach(([x, y], i) => setTimeout(() => burst(x, y, { count: 50, power: 1.3, ice: true }), i * 140));
+  points.forEach(([x, y], i) => setTimeout(() => burst(x, y, { count: 50, power: 1.3, ice: false }), i * 140));
 }

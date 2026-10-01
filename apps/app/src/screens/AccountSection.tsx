@@ -6,6 +6,7 @@ import type { SyncError } from "../lib/sync/errors.ts";
 import { syncEngine } from "../sync/runtime.ts";
 import { useSync } from "../sync/useSync.ts";
 import { useApp } from "../state.tsx";
+import { Icon } from "../ui/Icon.tsx";
 import { Modal } from "../ui/Modal.tsx";
 
 /** Ticks every `ms` so relative times stay fresh. */
@@ -178,7 +179,8 @@ function SignedIn({ sync }: { sync: SyncSnapshot }) {
           disabled={sync.status === "syncing" || sync.status === "rateLimited"}
           onClick={() => void syncEngine.requestSync("manual")}
         >
-          🔄 {a.syncNow}
+          <Icon name="refresh" size={18} />
+          {a.syncNow}
         </button>
       )}
       <button className="btn ghost block" onClick={() => void syncEngine.signOut()}>

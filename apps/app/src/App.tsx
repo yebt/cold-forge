@@ -92,7 +92,13 @@ export function App() {
   );
 
   if (phase.kind === "loading") {
-    return <div className="splash">🧊</div>;
+    return (
+      <div className="splash" role="status" aria-label="COLD FORGE">
+        <span className="splash-mark" aria-hidden="true">
+          COLD FORGE
+        </span>
+      </div>
+    );
   }
   if (phase.kind === "onboarding") {
     return (
@@ -204,9 +210,15 @@ function ReadyApp({ data, dataRef, today, setData, restart }: ReadyProps) {
     showConflict: () => setConflictDismissed(false),
   };
 
+  /** Each tab starts at its top (the document is the only scroller, so it would keep the old offset). */
+  const go = (next: Tab) => {
+    setTab(next);
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  };
+
   const goShare = (target: ShareTarget) => {
     setShareTarget(target);
-    setTab("share");
+    go("share");
   };
 
   return (
@@ -218,7 +230,7 @@ function ReadyApp({ data, dataRef, today, setData, restart }: ReadyProps) {
           {tab === "share" && <Share target={shareTarget} onTarget={setShareTarget} />}
           {tab === "settings" && <Settings />}
         </main>
-        <TabBar tab={tab} onChange={setTab} ui={t.ui} />
+        <TabBar tab={tab} onChange={go} ui={t.ui} />
       </div>
       {milestone !== null && (
         <MilestoneModal

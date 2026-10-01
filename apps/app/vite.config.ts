@@ -7,7 +7,7 @@ import { VitePWA } from "vite-plugin-pwa";
 /** Production app origin. `.env.production` sets VITE_APP_URL to the same value (see docs/deploy.md). */
 const DEFAULT_APP_URL = "https://app.coldforge.work";
 
-const THEME = "#070b12";
+const THEME = "#07090c";
 
 /** Public URL of the app (OG tags, canonical). Must be https outside localhost. */
 function appUrl(raw: string | undefined): string {

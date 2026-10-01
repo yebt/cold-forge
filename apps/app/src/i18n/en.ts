@@ -3,7 +3,7 @@ const habits = (n: number) => `${n} ${n === 1 ? "habit" : "habits"}`;
 
 /** App UI copy. `es` and `pt` are typed against this, so a missing key is a type error. */
 export const en = {
-  tabs: { today: "Today", progress: "Progress", share: "Share", settings: "Settings" },
+  tabs: { label: "Sections", today: "Today", progress: "Progress", share: "Share", settings: "Settings" },
   common: {
     next: "Next",
     back: "Back",
@@ -18,6 +18,8 @@ export const en = {
   arc: {
   },
   onboarding: {
+    createOwn: "Create your own",
+    language: "Language",
     welcome: "Forge yourself this winter.",
     stepOf: (n: number, total: number) => `Step ${n} of ${total}`,
     arcTitle: "Pick your arc",
@@ -42,9 +44,12 @@ export const en = {
     pickOne: "Pick at least one habit",
   },
   today: {
+    perfectDay: "Perfect day. Forged.",
+    habitsDone: (done: number, total: number) => `${done} of ${habits(total)}`,
+    habitStreak: (streak: number, best: number) => `streak ${streak} · best ${best}`,
     dayWord: "Day",
     dayOf: (day: number, total: number) => `Day ${day}/${total}`,
-    daysLeft: (n: number) => `${days(n)} left`,
+    daysLeft: (n: number) => (n === 0 ? "Last day. Finish strong." : `${days(n)} left`),
     streak: "streak",
     heat: "Forge heat",
     doneOf: (done: number, total: number) => `${done}/${total} done`,
@@ -67,6 +72,10 @@ export const en = {
     hardDay: "Hard day? Remember your why:",
   },
   progress: {
+    rankCurrent: "Current rank",
+    heatmapTitle: (total: number) => `Your ${total} days`,
+    tapDayShort: "tap a day to edit it",
+    habitStat: (streak: number, best: number, done: number, days: number) => `streak ${streak} · best ${best} · ${done}/${days}`,
     title: "Progress",
     heatmap: "92-day forge",
     tapDay: "Tap a past day to edit it",
@@ -84,9 +93,11 @@ export const en = {
     rankProgress: (n: number) => `${n} perfect ${n === 1 ? "day" : "days"}`,
   },
   share: {
+    kindLabel: "Card type",
+    previewLabel: "Card preview",
     title: "Share your fire",
-    story: "Story",
-    milestone: (day: number) => `Day ${day}`,
+    story: "Today's card",
+    milestone: (day: number) => `Milestone: day ${day}`,
     shareImage: "Share image",
     copyText: "Copy text",
     copied: "Copied!",

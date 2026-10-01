@@ -4,7 +4,7 @@ const days = (n: number) => `${n} ${n === 1 ? "día" : "días"}`;
 const habits = (n: number) => `${n} ${n === 1 ? "hábito" : "hábitos"}`;
 
 export const es: UiMessages = {
-  tabs: { today: "Hoy", progress: "Progreso", share: "Compartir", settings: "Ajustes" },
+  tabs: { label: "Secciones", today: "Hoy", progress: "Progreso", share: "Compartir", settings: "Ajustes" },
   common: {
     next: "Siguiente",
     back: "Atrás",
@@ -19,6 +19,8 @@ export const es: UiMessages = {
   arc: {
   },
   onboarding: {
+    createOwn: "Crear el mío",
+    language: "Idioma",
     welcome: "Fórjate este invierno.",
     stepOf: (n, total) => `Paso ${n} de ${total}`,
     arcTitle: "Elige tu arc",
@@ -43,9 +45,12 @@ export const es: UiMessages = {
     pickOne: "Elige al menos un hábito",
   },
   today: {
+    perfectDay: "Día perfecto. Forjado.",
+    habitsDone: (done, total) => `${done} de ${habits(total)}`,
+    habitStreak: (streak, best) => `racha ${streak} · mejor ${best}`,
     dayWord: "Día",
     dayOf: (day, total) => `Día ${day}/${total}`,
-    daysLeft: (n) => (n === 1 ? "Queda 1 día" : `Quedan ${n} días`),
+    daysLeft: (n) => (n === 0 ? "Último día. Ciérralo fuerte." : n === 1 ? "Queda 1 día" : `Quedan ${n} días`),
     streak: "racha",
     heat: "Calor de la forja",
     doneOf: (done, total) => `${done}/${total} listos`,
@@ -68,6 +73,10 @@ export const es: UiMessages = {
     hardDay: "¿Día difícil? Recuerda tu porqué:",
   },
   progress: {
+    rankCurrent: "Rango actual",
+    heatmapTitle: (total) => `Tus ${total} días`,
+    tapDayShort: "toca un día para editarlo",
+    habitStat: (streak, best, done, days) => `racha ${streak} · mejor ${best} · ${done}/${days}`,
     title: "Progreso",
     heatmap: "La forja de 92 días",
     tapDay: "Toca un día pasado para editarlo",
@@ -85,9 +94,11 @@ export const es: UiMessages = {
     rankProgress: (n) => `${n} ${n === 1 ? "día perfecto" : "días perfectos"}`,
   },
   share: {
+    kindLabel: "Tipo de tarjeta",
+    previewLabel: "Vista previa de la tarjeta",
     title: "Presume tu fuego",
-    story: "Historia",
-    milestone: (day) => `Día ${day}`,
+    story: "Día de hoy",
+    milestone: (day) => `Hito: día ${day}`,
     shareImage: "Compartir imagen",
     copyText: "Copiar texto",
     copied: "¡Copiado!",

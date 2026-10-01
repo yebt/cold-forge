@@ -1,5 +1,6 @@
 import type { Locale } from "@cold-forge/i18n";
 import { useState } from "react";
+import { Icon } from "../ui/Icon.tsx";
 import { Modal } from "../ui/Modal.tsx";
 import { PWA_MESSAGES, pwaLocale, type PwaMessages } from "./messages.ts";
 import { useInstall } from "./runtime.ts";
@@ -67,7 +68,7 @@ export function InstallBanner({ locale }: Props) {
   if (!info.mode || info.dismissed) return null;
   return (
     <section className="pwa-install" aria-label={t.installTitle}>
-      <img className="pwa-install-icon" src="./icons/icon-192.png" alt="" width="44" height="44" />
+      <img className="pwa-install-icon" src="./icons/icon-192.png" alt="" width="40" height="40" />
       <div className="pwa-install-copy">
         <p className="pwa-install-title">{t.installTitle}</p>
         <p className="muted small">{t.installBody}</p>
@@ -92,7 +93,8 @@ export function InstallAppButton({ locale, className = "btn secondary block" }: 
   return (
     <>
       <button type="button" className={className} onClick={run}>
-        📲 {label}
+        <Icon name="install" size={18} />
+        {label}
       </button>
       {iosOpen && <IosInstallSheet locale={locale} onClose={() => setIosOpen(false)} />}
     </>

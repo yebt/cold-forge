@@ -28,6 +28,14 @@ export function formatShortDate(date: string, locale: Locale): string {
   });
 }
 
+/** Weekday + short date, e.g. "Wed, Oct 1" / "mié, 1 oct" (shown uppercase as a label). */
+export function formatWeekdayDate(date: string, locale: Locale): string {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y!, m! - 1, d!)
+    .toLocaleDateString(localeTag(locale), { weekday: "short", month: "short", day: "numeric" })
+    .replace(/[.,]/g, "");
+}
+
 /** BCP 47 tag used for Intl formatting. */
 export function localeTag(locale: Locale): string {
   return locale === "pt" ? "pt-BR" : locale === "es" ? "es-419" : "en-US";

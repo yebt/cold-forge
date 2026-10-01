@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { milestoneStates } from "../lib/milestones.ts";
 import { copyText, shareFile } from "../platform/share.ts";
 import { useApp } from "../state.tsx";
+import { Icon } from "../ui/Icon.tsx";
 
 export type ShareTarget = { kind: "story" } | { kind: "milestone"; day: number };
 
@@ -82,45 +83,54 @@ export function Share({ target, onTarget }: { target: ShareTarget; onTarget: (t:
 
   return (
     <div className="share">
-      <h1 className="screen-title">{ui.share.title}</h1>
+      <header className="screen-head">
+        <h1 className="screen-title">{ui.tabs.share}</h1>
+      </header>
+      <p className="lead">{ui.share.title}</p>
 
-      {reached.length > 0 && (
-        <div className="pills-row" role="radiogroup">
+      <div className="chip-row" role="radiogroup" aria-label={ui.share.kindLabel}>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={target.kind === "story"}
+          className={`chip${target.kind === "story" ? " on" : ""}`}
+          onClick={() => onTarget({ kind: "story" })}
+        >
+          {ui.share.story}
+        </button>
+        {reached.map((r) => (
           <button
+            key={r.day}
+            type="button"
             role="radio"
-            aria-checked={target.kind === "story"}
-            className={`pill${target.kind === "story" ? " on" : ""}`}
-            onClick={() => onTarget({ kind: "story" })}
+            aria-checked={milestoneDay === r.day}
+            className={`chip${milestoneDay === r.day ? " on" : ""}`}
+            onClick={() => onTarget({ kind: "milestone", day: r.day })}
           >
-            📱 {ui.share.story}
+            {ui.share.milestone(r.day)}
           </button>
-          {reached.map((r) => (
-            <button
-              key={r.day}
-              role="radio"
-              aria-checked={milestoneDay === r.day}
-              className={`pill${milestoneDay === r.day ? " on" : ""}`}
-              onClick={() => onTarget({ kind: "milestone", day: r.day })}
-            >
-              🏅 {ui.share.milestone(r.day)}
-            </button>
-          ))}
-        </div>
-      )}
+        ))}
+      </div>
 
-      <div className="card-preview">
+      <div className="card-preview" aria-label={ui.share.previewLabel} aria-busy={preview.status === "loading"}>
         {preview.status === "ready" && <img src={preview.url} alt={text} />}
-        {preview.status === "loading" && <div className="preview-loading">{ui.share.rendering}</div>}
+        {preview.status === "loading" && (
+          <div className="preview-loading" role="status">
+            {ui.share.rendering}
+          </div>
+        )}
         {preview.status === "error" && <FallbackCard milestoneDay={milestoneDay} />}
       </div>
       {preview.status === "error" && <p className="muted small center">{ui.share.previewFailed}</p>}
 
       <div className="share-actions">
-        <button className="btn primary" onClick={onShareImage} disabled={busy || preview.status === "loading"}>
-          📤 {ui.share.shareImage}
+        <button type="button" className="btn primary block" onClick={onShareImage} disabled={busy || preview.status === "loading"}>
+          <Icon name="share" size={18} strokeWidth={2.2} />
+          {ui.share.shareImage}
         </button>
-        <button className="btn secondary" onClick={onCopy}>
-          📋 {ui.share.copyText}
+        <button type="button" className="btn secondary block" onClick={onCopy}>
+          <Icon name="copy" size={18} />
+          {ui.share.copyText}
         </button>
       </div>
 
@@ -138,50 +148,26 @@ function FallbackCard({ milestoneDay }: { milestoneDay: number | undefined }) {
   const { data, t, derived } = useApp();
   const { m } = t;
   const { stats } = derived;
-  const pct = Math.round((stats.day / stats.totalDays) * 100);
   return (
     <div className="fallback-card">
-      <span className="fc-brand">COLD FORGE</span>
-      <span className="fc-title">{stats.title}</span>
+      <span className="fc-kicker">{stats.title}</span>
       {milestoneDay !== undefined ? (
         <>
-          <span className="fc-day">🏅 {milestoneDay}</span>
+          <span className="fc-tag">{t.ui.milestone.title}</span>
+          <span className="fc-big">{milestoneDay}</span>
           <span className="fc-sub">{m.milestones[milestoneDay]}</span>
         </>
       ) : (
         <>
-          <span className="fc-day">{m.stats.day(stats.day, stats.totalDays)}</span>
-          <div className="bar">
-            <div style={{ width: `${pct}%` }} />
-          </div>
+          <span className="fc-big ember">{stats.day}</span>
+          <span className="fc-sub">{m.stats.day(stats.day, stats.totalDays)}</span>
+          <span className="fc-meta">
+            {m.stats.perfectStreak} {stats.perfectStreak} · {m.ranks[stats.rank.id]} · {Math.round(stats.completionRate * 100)}%
+          </span>
         </>
       )}
-      <div className="fc-stats">
-        <span>
-          <strong>{stats.perfectStreak}🔥</strong>
-          {m.stats.perfectStreak}
-        </span>
-        <span>
-          <strong>{Math.round(stats.completionRate * 100)}%</strong>
-          {m.stats.completion}
-        </span>
-        <span>
-          <strong>{stats.rank.emoji}</strong>
-          {m.ranks[stats.rank.id]}
-        </span>
-      </div>
-      <ul className="fc-habits">
-        {stats.habits.slice(0, 6).map((h) => (
-          <li key={h.habit.id}>
-            <span>
-              {h.habit.emoji} {h.habit.name}
-            </span>
-            <span>{h.currentStreak}🔥</span>
-          </li>
-        ))}
-      </ul>
       {data.settings.displayName && <span className="fc-name">{data.settings.displayName}</span>}
-      <span className="fc-foot">#WinterArc</span>
+      <span className="fc-foot">COLD FORGE · #WINTERARC</span>
     </div>
   );
 }

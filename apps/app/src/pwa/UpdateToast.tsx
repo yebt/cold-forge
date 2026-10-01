@@ -31,7 +31,7 @@ export function UpdateToast({ locale }: { locale?: Locale }) {
   if (offlineReady) {
     return (
       <div className="pwa-toast pwa-toast-quiet" role="status" aria-live="polite" onClick={dismissOfflineReady}>
-        <span className="pwa-toast-text">❄️ {t.offlineReady}</span>
+        <span className="pwa-toast-text">{t.offlineReady}</span>
       </div>
     );
   }

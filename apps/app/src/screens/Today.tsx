@@ -1,17 +1,20 @@
 import { diffDays } from "@cold-forge/core";
 import { useEffect, useState } from "react";
+import { formatWeekdayDate } from "../i18n/index.ts";
 import { dayProgress } from "../lib/derive.ts";
 import { activeHabits, isDone, setCheckIn } from "../lib/model.ts";
 import { hapticImpact, hapticSuccess, playClang, playFanfare } from "../platform/feedback.ts";
 import { InstallBanner } from "../pwa/index.ts";
 import { useApp } from "../state.tsx";
-import { ForgeRing } from "../ui/ForgeRing.tsx";
+import { ForgeRing, useTicker } from "../ui/ForgeRing.tsx";
+import { HabitIcon, Icon } from "../ui/Icon.tsx";
 import { burstFromElement, celebrate } from "../ui/sparks.ts";
 
 export function Today({ onNewArc }: { onNewArc: () => void }) {
   const { data, today, t, derived, update } = useApp();
-  const { ui, m } = t;
+  const { ui, m, locale } = t;
   const { stats } = derived;
+  /** The full-screen "perfect day" moment (auto-dismisses; never takes taps or scrolls). */
   const [celebration, setCelebration] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,9 +25,12 @@ export function Today({ onNewArc }: { onNewArc: () => void }) {
 
   const habits = activeHabits(data);
   const { done, total } = dayProgress(data, today);
+  const perfect = total > 0 && done >= total;
   const active = stats.status === "active";
-  const streakFor = new Map(stats.habits.map((h) => [h.habit.id, h.currentStreak]));
+  const statsFor = new Map(stats.habits.map((h) => [h.habit.id, h]));
   const hardDay = active && stats.day > 1 && stats.perfectStreak === 0;
+  const streakShown = useTicker(stats.perfectStreak, 90);
+  const msgs = ui.today.perfectMessages;
 
   const toggle = (habitId: string, el: HTMLElement) => {
     const wasDone = isDone(data, habitId, today);
@@ -32,15 +38,14 @@ export function Today({ onNewArc }: { onNewArc: () => void }) {
     if (wasDone) return;
     burstFromElement(el);
     if (data.settings.haptics) void hapticImpact();
-    const perfect = done + 1 === total;
-    if (perfect) {
+    if (done + 1 === total) {
       setTimeout(() => {
         celebrate();
         if (data.settings.haptics) void hapticSuccess();
         if (data.settings.sound) playFanfare();
       }, 180);
-      const msgs = ui.today.perfectMessages;
-      setCelebration(msgs[Math.floor(Math.random() * msgs.length)] ?? ui.today.allDone);
+      const line = msgs[Math.floor(Math.random() * msgs.length)] ?? ui.today.allDone;
+      setCelebration(line);
     } else if (data.settings.sound) {
       playClang();
     }
@@ -49,107 +54,127 @@ export function Today({ onNewArc }: { onNewArc: () => void }) {
   return (
     <div className="today">
       <header className="today-head">
-        <div className="head-row">
-          <span className="brand">COLD FORGE</span>
-          <span className={`streak-badge${stats.perfectStreak > 0 ? " hot" : ""}`} title={m.stats.perfectStreak}>
-            🔥 <strong>{stats.perfectStreak}</strong>
-            <span className="sr-only"> {m.stats.perfectStreak}</span>
+        <div className="today-title">
+          <p className="label eyebrow">
+            <span>{formatWeekdayDate(today, locale)}</span>
+            <span aria-hidden="true"> · </span>
+            <span>{stats.title}</span>
+          </p>
+          {stats.status === "upcoming" ? (
+            <h1 className="display-title">{ui.today.upcomingTitle}</h1>
+          ) : (
+            <h1 className="day-big" aria-label={ui.today.dayOf(stats.day, stats.totalDays)}>
+              <span className="day-num">
+                {ui.today.dayWord} {stats.day}
+              </span>
+              <span className="day-total">/ {stats.totalDays}</span>
+            </h1>
+          )}
+        </div>
+        <div className={`streak${stats.perfectStreak > 0 ? " hot" : ""}`}>
+          <span className="streak-num" aria-hidden="true">
+            {streakShown}
+          </span>
+          <span className="label" aria-hidden="true">{ui.today.streak}</span>
+          <span className="sr-only">
+            {m.stats.perfectStreak}: {stats.perfectStreak}
           </span>
         </div>
-        {stats.status === "upcoming" ? (
-          <h1 className="day-big">
-            {ui.today.upcomingTitle}
-          </h1>
-        ) : (
-          <>
-            <h1 className="day-big" aria-label={ui.today.dayOf(stats.day, stats.totalDays)}>
-              <span className="day-word">{ui.today.dayWord}</span>
-              <span className="day-num">{stats.day}</span>
-              <span className="day-total">/{stats.totalDays}</span>
-            </h1>
-            <p className="day-meta">
-              {stats.title} · {stats.status === "finished" ? ui.today.finishedTitle : ui.today.daysLeft(stats.daysRemaining)}
-            </p>
-          </>
-        )}
-        {data.arc.why && (
-          <blockquote className={`why${hardDay ? " hard" : ""}`}>
-            {hardDay && <span className="why-label">{ui.today.hardDay}</span>}
-            “{data.arc.why}”
-          </blockquote>
-        )}
       </header>
+
+      {active && habits.length > 0 && (
+        <section className={`forge${perfect ? " perfect" : ""}`} aria-label={ui.today.heat}>
+          <ForgeRing done={done} total={total} label={ui.today.heat} />
+          <div className="forge-body">
+            <span className="label">{ui.today.heat}</span>
+            <span className="forge-status" role="status">
+              {perfect ? ui.today.perfectDay : ui.today.habitsDone(done, total)}
+            </span>
+            <div className="segments" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${total}, minmax(0, 1fr))` }}>
+              {habits.map((h, i) => (
+                <span key={h.id} className={i < done ? "on" : ""} style={{ ["--i" as string]: i }} />
+              ))}
+            </div>
+            <span className="forge-meta">{ui.today.daysLeft(stats.daysRemaining)}</span>
+          </div>
+        </section>
+      )}
+
+      {data.arc.why && (
+        <blockquote className={`why${hardDay ? " hard" : ""}`}>
+          {hardDay && <span className="why-label">{ui.today.hardDay}</span>}“{data.arc.why}”
+        </blockquote>
+      )}
 
       {stats.status === "upcoming" && (
         <section className="card state-card">
-          <span className="state-emoji">🧊</span>
+          <span className="state-icon">
+            <Icon name="snow" size={28} />
+          </span>
           <p>{ui.today.upcomingBody(diffDays(today, data.arc.startDate))}</p>
         </section>
       )}
 
       {stats.status === "finished" && (
         <section className="card state-card">
-          <span className="state-emoji">{stats.rank.emoji}</span>
-          <h2>{ui.today.finishedTitle}</h2>
+          <span className="label">{ui.today.finishedTitle}</span>
+          <strong className="state-rank">{m.ranks[stats.rank.id]}</strong>
           <p>{ui.today.finishedBody}</p>
-          <p className="muted">
-            {m.stats.perfectDays}: <strong>{stats.perfectDays}</strong> · {m.ranks[stats.rank.id]}
+          <p className="muted small">
+            {m.stats.perfectDays}: <strong>{stats.perfectDays}</strong>
           </p>
-          <button className="btn primary" onClick={onNewArc}>
+          <button type="button" className="btn primary block" onClick={onNewArc}>
             {ui.today.newArc}
           </button>
         </section>
       )}
 
-      {active && (
-        <>
-          <section className="heat">
-            <ForgeRing done={done} total={total} label={ui.today.heat} />
-            <div className="heat-text">
-              <span className="eyebrow">{ui.today.heat}</span>
-              <strong>{total > 0 && done >= total ? ui.today.allDone : ui.today.doneOf(done, total)}</strong>
-              {done === 0 && <span className="muted small">{ui.today.tapToForge}</span>}
-            </div>
-          </section>
-
-          {habits.length === 0 ? (
+      {active &&
+        (habits.length === 0 ? (
+          <section className="card state-card">
             <p className="muted">{ui.today.noHabits}</p>
-          ) : (
-            <ul className="checklist">
-              {habits.map((h) => {
-                const isOn = isDone(data, h.id, today);
-                const name = h.templateId ? m.habits[h.templateId] : h.name;
-                const streak = streakFor.get(h.id) ?? 0;
-                return (
-                  <li key={h.id}>
-                    <button
-                      className={`check-btn${isOn ? " on" : ""}`}
-                      aria-pressed={isOn}
-                      aria-label={isOn ? ui.today.uncheckLabel(name) : ui.today.checkLabel(name)}
-                      onClick={(e) => toggle(h.id, e.currentTarget.querySelector(".check-mark") ?? e.currentTarget)}
-                    >
-                      <span className="check-emoji" aria-hidden="true">
-                        {h.emoji}
+          </section>
+        ) : (
+          <ul className="checklist">
+            {habits.map((h) => {
+              const isOn = isDone(data, h.id, today);
+              const name = h.templateId ? m.habits[h.templateId] : h.name;
+              const hs = statsFor.get(h.id);
+              return (
+                <li key={h.id}>
+                  <button
+                    type="button"
+                    className={`habit-row${isOn ? " on" : ""}`}
+                    aria-pressed={isOn}
+                    aria-label={isOn ? ui.today.uncheckLabel(name) : ui.today.checkLabel(name)}
+                    onClick={(e) => toggle(h.id, e.currentTarget.querySelector(".check-mark") ?? e.currentTarget)}
+                  >
+                    <HabitIcon habit={h} />
+                    <span className="habit-text">
+                      <span className="habit-name">{name}</span>
+                      <span className="habit-meta">
+                        {ui.today.habitStreak(hs?.currentStreak ?? 0, hs?.longestStreak ?? 0)}
                       </span>
-                      <span className="check-name">{name}</span>
-                      {streak > 0 && <span className="check-streak">{streak}🔥</span>}
-                      <span className="check-mark" aria-hidden="true">
-                        {isOn ? "✓" : ""}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </>
-      )}
+                    </span>
+                    <span className="check-mark" aria-hidden="true">
+                      {isOn && <Icon name="check" size={20} strokeWidth={3} />}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ))}
+
+      {active && done === 0 && habits.length > 0 && <p className="hint">{ui.today.tapToForge}</p>}
 
       {celebration && (
-        <div className="celebration" role="status" onClick={() => setCelebration(null)}>
+        <div className="celebration" role="status" aria-live="polite">
           <div className="celebration-inner">
-            <span className="celebration-emoji">🔥</span>
-            <strong>{ui.today.allDone}</strong>
+            <span className="celebration-icon">
+              <Icon name="flame" size={44} strokeWidth={1.6} />
+            </span>
+            <strong>{ui.today.perfectDay}</strong>
             <span>{celebration}</span>
           </div>
         </div>

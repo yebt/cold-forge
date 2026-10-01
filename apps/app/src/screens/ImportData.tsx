@@ -5,6 +5,7 @@ import { prepareImport, readImportFile, type ImportError, type ImportSummary } f
 import type { AppData } from "../lib/model.ts";
 import { useSync } from "../sync/useSync.ts";
 import { useApp } from "../state.tsx";
+import { Icon } from "../ui/Icon.tsx";
 import { Modal } from "../ui/Modal.tsx";
 
 /**
@@ -56,8 +57,9 @@ export function ImportData({ onDone }: { onDone: (message: string) => void }) {
         onChange={(e) => void onPick(e.target.files?.[0])}
         data-testid="import-input"
       />
-      <button className="btn secondary block" onClick={() => input.current?.click()}>
-        ⬆️ {im.button}
+      <button type="button" className="btn secondary block" onClick={() => input.current?.click()}>
+        <Icon name="upload" size={18} />
+        {im.button}
       </button>
       {error && (
         <p className="note warn" role="alert">

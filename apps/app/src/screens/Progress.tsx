@@ -5,6 +5,7 @@ import { heatmap, habitName } from "../lib/derive.ts";
 import { milestoneStates } from "../lib/milestones.ts";
 import { activeHabits, isDone, setCheckIn } from "../lib/model.ts";
 import { useApp } from "../state.tsx";
+import { HabitIcon, Icon } from "../ui/Icon.tsx";
 import { Modal } from "../ui/Modal.tsx";
 import { RankCard } from "../ui/RankCard.tsx";
 
@@ -15,98 +16,98 @@ export function Progress() {
   const [editing, setEditing] = useState<{ date: ISODate; day: number } | null>(null);
   const cells = heatmap(data, today);
   const p = ui.progress;
+  const stored = new Map(data.habits.map((h) => [h.id, h]));
+  const elapsed = stats.status === "upcoming" ? 0 : stats.day;
 
   return (
     <div className="progress">
-      <h1 className="screen-title">{p.title}</h1>
+      <header className="screen-head">
+        <h1 className="screen-title">{p.title}</h1>
+        {stats.status !== "upcoming" && <span className="label">{m.stats.day(stats.day, stats.totalDays)}</span>}
+      </header>
 
-      <section className="tiles">
-        <div className="tile">
-          <span className="tile-value">{Math.round(stats.completionRate * 100)}%</span>
-          <span className="tile-label">{m.stats.completion}</span>
-        </div>
+      <section className="tiles" aria-label={p.title}>
         <div className="tile">
           <span className="tile-value">{stats.perfectDays}</span>
           <span className="tile-label">{m.stats.perfectDays}</span>
         </div>
         <div className="tile">
-          <span className="tile-value ember">{stats.perfectStreak}🔥</span>
+          <span className="tile-value ember">{stats.perfectStreak}</span>
           <span className="tile-label">{m.stats.perfectStreak}</span>
+        </div>
+        <div className="tile">
+          <span className="tile-value">{Math.round(stats.completionRate * 100)}%</span>
+          <span className="tile-label">{m.stats.completion}</span>
         </div>
       </section>
 
       <RankCard />
 
-      <section className="card">
+      <section className="card" aria-labelledby="heatmap-title">
         <div className="card-head">
-          <h2>{p.heatmap}</h2>
-          <span className="muted small">{m.stats.day(stats.day, stats.totalDays)}</span>
+          <h2 className="card-title" id="heatmap-title">
+            {p.heatmapTitle(stats.totalDays)}
+          </h2>
+          <span className="label-num">{p.tapDayShort}</span>
         </div>
-        <div className="heatmap" role="grid">
+        <div className="heatmap">
           {cells.map((c) => (
             <button
               key={c.date}
-              className={`cell ${c.state}${c.isToday ? " today" : ""}`}
-              style={{ ["--level" as string]: c.level }}
+              type="button"
+              className={`cell ${c.state}${c.isToday ? " today" : ""}${c.state === "partial" && c.level >= 0.5 ? " high" : ""}`}
               disabled={!c.editable}
               onClick={() => setEditing({ date: c.date, day: c.day })}
               aria-label={`${p.editDay(c.day)} · ${formatShortDate(c.date, locale)} · ${Math.round(c.level * 100)}%`}
-            >
-              {c.day}
-            </button>
+            />
           ))}
         </div>
         <div className="legend">
           <span>
-            <i className="cell missed" /> {p.legendNone}
+            <i className="swatch missed" /> {p.legendNone}
           </span>
           <span>
-            <i className="cell partial" style={{ ["--level" as string]: 0.5 }} /> {p.legendPartial}
+            <i className="swatch partial" /> {p.legendPartial}
           </span>
           <span>
-            <i className="cell perfect" /> {p.legendPerfect}
+            <i className="swatch perfect" /> {p.legendPerfect}
           </span>
         </div>
-        <p className="muted small">{p.tapDay}</p>
       </section>
 
-      <section className="card">
-        <h2>{p.perHabit}</h2>
-        <table className="habit-table">
-          <thead>
-            <tr>
-              <th />
-              <th>{p.current}</th>
-              <th>{p.best}</th>
-              <th>{p.total}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stats.habits.map((h) => (
-              <tr key={h.habit.id}>
-                <th scope="row">
-                  <span aria-hidden="true">{h.habit.emoji}</span> {h.habit.name}
-                </th>
-                <td className="ember">{h.currentStreak}🔥</td>
-                <td>{h.longestStreak}</td>
-                <td>{h.totalDone}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <section aria-labelledby="per-habit-title">
+        <h2 className="section-label" id="per-habit-title">
+          {p.perHabit}
+        </h2>
+        <ul className="stat-rows">
+          {stats.habits.map((h) => {
+            const s = stored.get(h.habit.id);
+            return (
+              <li key={h.habit.id}>
+                <HabitIcon habit={{ templateId: s?.templateId, emoji: h.habit.emoji }} size="sm" />
+                <span className="stat-text">
+                  <span className="stat-name">{h.habit.name}</span>
+                  <span className="stat-value">{p.habitStat(h.currentStreak, h.longestStreak, h.totalDone, elapsed)}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       </section>
 
-      <section className="card">
-        <h2>{p.milestones}</h2>
+      <section aria-labelledby="milestones-title">
+        <h2 className="section-label" id="milestones-title">
+          {p.milestones}
+        </h2>
         <ul className="milestones">
           {milestoneStates(stats).map((ms) => (
             <li key={ms.day} className={ms.reached ? "reached" : "locked"}>
-              <span className="ms-badge">{ms.reached ? "🏅" : "🔒"}</span>
+              <span className="ms-day">{ms.day}</span>
               <span className="ms-text">
-                <strong>{p.locked(ms.day)}</strong>
-                <span>{m.milestones[ms.day]}</span>
+                <strong>{m.milestones[ms.day]}</strong>
+                <span>{ms.reached ? p.reached : p.locked(ms.day)}</span>
               </span>
-              {ms.reached && <span className="ms-tag">{p.reached}</span>}
+              <Icon name={ms.reached ? "medal" : "lock"} size={18} className="ms-icon" />
             </li>
           ))}
         </ul>
@@ -126,24 +127,25 @@ export function Progress() {
               return (
                 <li key={h.id}>
                   <button
-                    className={`check-btn${on ? " on" : ""}`}
+                    type="button"
+                    className={`habit-row${on ? " on" : ""}`}
                     aria-pressed={on}
                     aria-label={on ? ui.today.uncheckLabel(name) : ui.today.checkLabel(name)}
                     onClick={() => update((d, now) => setCheckIn(d, h.id, editing.date, !on, now))}
                   >
-                    <span className="check-emoji" aria-hidden="true">
-                      {h.emoji}
+                    <HabitIcon habit={h} />
+                    <span className="habit-text">
+                      <span className="habit-name">{name}</span>
                     </span>
-                    <span className="check-name">{name}</span>
                     <span className="check-mark" aria-hidden="true">
-                      {on ? "✓" : ""}
+                      {on && <Icon name="check" size={20} strokeWidth={3} />}
                     </span>
                   </button>
                 </li>
               );
             })}
           </ul>
-          <button className="btn primary block" onClick={() => setEditing(null)}>
+          <button type="button" className="btn primary block" onClick={() => setEditing(null)}>
             {ui.common.done}
           </button>
         </Modal>

@@ -25,6 +25,7 @@ import { AccountSection } from "./AccountSection.tsx";
 import { ImportData } from "./ImportData.tsx";
 import { Modal } from "../ui/Modal.tsx";
 import { Toggle } from "../ui/Toggle.tsx";
+import { HabitIcon, Icon } from "../ui/Icon.tsx";
 
 const APP_VERSION = "0.1.0";
 
@@ -85,21 +86,26 @@ export function Settings() {
 
   return (
     <div className="settings">
-      <h1 className="screen-title">{s.title}</h1>
+      <header className="screen-head">
+        <h1 className="screen-title">{s.title}</h1>
+      </header>
 
       <section className="card group">
         <h2>{s.general}</h2>
         <div className="row">
-          <span>{s.language}</span>
-          <div className="pills-row" role="radiogroup" aria-label={s.language}>
+          <span id="settings-lang">{s.language}</span>
+          <div className="seg" role="radiogroup" aria-labelledby="settings-lang">
             {LOCALES.map((l) => (
               <button
                 key={l}
                 role="radio"
                 aria-checked={data.settings.locale === l}
-                className={`pill small${data.settings.locale === l ? " on" : ""}`}
+                type="button"
+                className={`seg-btn${data.settings.locale === l ? " on" : ""}`}
                 onClick={() => update((d, now) => updateSettings(d, { locale: l }, now))}
                 title={LOCALE_NAMES[l]}
+                aria-label={LOCALE_NAMES[l]}
+                lang={l}
               >
                 {l.toUpperCase()}
               </button>
@@ -197,27 +203,37 @@ export function Settings() {
               />
             ) : (
               <li key={h.id} className="habit-edit-row">
-                <span className="he-emoji" aria-hidden="true">
-                  {h.emoji}
-                </span>
+                <HabitIcon habit={h} />
                 <span className="he-name">{habitName(h, m)}</span>
                 <span className="he-actions">
-                  <button className="icon-btn" disabled={i === 0} aria-label={s.moveUp} onClick={() => update((d, now) => moveHabit(d, h.id, -1, now))}>
-                    ↑
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    disabled={i === 0}
+                    aria-label={`${s.moveUp}: ${habitName(h, m)}`}
+                    onClick={() => update((d, now) => moveHabit(d, h.id, -1, now))}
+                  >
+                    <Icon name="up" size={18} />
                   </button>
                   <button
+                    type="button"
                     className="icon-btn"
                     disabled={i === habits.length - 1}
-                    aria-label={s.moveDown}
+                    aria-label={`${s.moveDown}: ${habitName(h, m)}`}
                     onClick={() => update((d, now) => moveHabit(d, h.id, 1, now))}
                   >
-                    ↓
+                    <Icon name="down" size={18} />
                   </button>
-                  <button className="icon-btn" aria-label={s.edit} onClick={() => setEditingId(h.id)}>
-                    ✎
+                  <button type="button" className="icon-btn" aria-label={`${s.edit}: ${habitName(h, m)}`} onClick={() => setEditingId(h.id)}>
+                    <Icon name="edit" size={18} />
                   </button>
-                  <button className="icon-btn danger" aria-label={ui.common.delete} onClick={() => setConfirmDelete(h)}>
-                    🗑
+                  <button
+                    type="button"
+                    className="icon-btn danger"
+                    aria-label={`${ui.common.delete}: ${habitName(h, m)}`}
+                    onClick={() => setConfirmDelete(h)}
+                  >
+                    <Icon name="trash" size={18} />
                   </button>
                 </span>
               </li>
@@ -250,20 +266,24 @@ export function Settings() {
 
       <section className="card group">
         <h2>{s.data}</h2>
-        <button className="btn secondary block" onClick={onExport}>
-          ⬇️ {s.export}
+        <button type="button" className="btn secondary block" onClick={onExport}>
+          <Icon name="download" size={18} />
+          {s.export}
         </button>
         <ImportData onDone={setToast} />
         <InstallAppButton locale={t.locale} />
-        <button className="btn danger block" onClick={() => setConfirmReset(true)}>
+        <button type="button" className="btn danger block" onClick={() => setConfirmReset(true)}>
           {s.reset}
         </button>
-        <p className="muted small center">
-          🔒 {signedIn ? ui.account.syncedNote : s.offline}
-          <br />
-          {s.version(APP_VERSION)}
-        </p>
       </section>
+
+      <footer className="settings-foot">
+        <p className="muted small">
+          <Icon name="lock" size={14} />
+          {signedIn ? ui.account.syncedNote : s.offline}
+        </p>
+        <p className="label-num">{s.version(APP_VERSION)}</p>
+      </footer>
 
       {toast && (
         <div className="toast" role="status">
@@ -275,10 +295,10 @@ export function Settings() {
         <Modal title={s.reset} onClose={() => setConfirmReset(false)} closeLabel={ui.common.close}>
           <p className="modal-text">{s.resetConfirm}</p>
           <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setConfirmReset(false)}>
+            <button type="button" className="btn ghost" onClick={() => setConfirmReset(false)}>
               {ui.common.cancel}
             </button>
-            <button className="btn danger" onClick={() => void reset()}>
+            <button type="button" className="btn danger" onClick={() => void reset()}>
               {s.resetYes}
             </button>
           </div>
@@ -289,7 +309,7 @@ export function Settings() {
         <Modal title={ui.common.delete} onClose={() => setConfirmDelete(null)} closeLabel={ui.common.close}>
           <p className="modal-text">{s.deleteHabitConfirm(habitName(confirmDelete, m))}</p>
           <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setConfirmDelete(null)}>
+            <button type="button" className="btn ghost" onClick={() => setConfirmDelete(null)}>
               {ui.common.cancel}
             </button>
             <button
@@ -338,10 +358,10 @@ function EditHabitRow(props: {
           aria-invalid={problem !== null}
           autoFocus
         />
-        <button type="submit" className="btn primary small" disabled={problem !== null}>
+        <button type="submit" className="btn primary" disabled={problem !== null}>
           {props.saveLabel}
         </button>
-        <button type="button" className="btn ghost small" onClick={props.onCancel}>
+        <button type="button" className="btn ghost" onClick={props.onCancel}>
           {props.cancelLabel}
         </button>
       </form>
