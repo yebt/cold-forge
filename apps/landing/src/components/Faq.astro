@@ -1,0 +1,80 @@
+---
+import { useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t } = useCopy(Astro.props.locale);
+---
+
+<section id="faq" class="section" aria-labelledby="faq-title">
+  <div class="container narrow">
+    <header class="section-head center" data-reveal>
+      <p class="kicker">{t.faq.kicker}</p>
+      <h2 id="faq-title" class="h2">{t.faq.title}</h2>
+    </header>
+
+    <div class="list">
+      {
+        t.faq.items.map((item, i) => (
+          <details class="item" open={i === 0} data-reveal style={`--reveal-delay:${i * 60}ms`}>
+            <summary>
+              <h3>{item.q}</h3>
+              <span class="plus" aria-hidden="true" />
+            </summary>
+            <p>{item.a}</p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .narrow { max-width: calc(820px + var(--gutter) * 2); }
+  .list { display: grid; gap: 12px; }
+  .item {
+    border-radius: 18px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    transition: border-color 0.2s;
+  }
+  .item[open] { border-color: var(--border-strong); background: linear-gradient(180deg, #0f1724, #0b121d); }
+  summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 22px;
+    cursor: pointer;
+    border-radius: 18px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  h3 { font-size: 1.12rem; font-weight: 900; letter-spacing: -0.01em; line-height: 1.3; }
+  .plus {
+    position: relative;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+  }
+  .plus::before,
+  .plus::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 12px;
+    height: 2px;
+    margin: -1px 0 0 -6px;
+    background: var(--ice);
+    border-radius: 2px;
+    transition: transform 0.25s;
+  }
+  .plus::after { transform: rotate(90deg); }
+  .item[open] .plus { border-color: var(--ember); }
+  .item[open] .plus::after { transform: rotate(0deg); }
+  p { padding: 0 22px 22px; color: var(--muted); max-width: 68ch; }
+</style>

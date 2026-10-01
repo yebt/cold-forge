@@ -1,0 +1,323 @@
+---
+import { ARC_DAYS, FORGE_RANKS, HABIT_TEMPLATES, type HabitTemplateId } from "@cold-forge/core";
+import { fmt, useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { locale } = Astro.props;
+const { t, m } = useCopy(locale);
+
+// A believable mid-arc snapshot. Purely illustrative.
+const DAY = 23;
+const HEAT = 0.78;
+const rank = FORGE_RANKS.find((r) => r.id === "steel")!;
+const rows: { id: HabitTemplateId; streak: number; done: boolean }[] = [
+  { id: "coldShower", streak: 23, done: true },
+  { id: "gym", streak: 12, done: true },
+  { id: "read", streak: 18, done: true },
+  { id: "wakeEarly", streak: 9, done: false },
+  { id: "water", streak: 23, done: false },
+];
+const emoji = (id: HabitTemplateId) => HABIT_TEMPLATES.find((h) => h.id === id)?.emoji ?? "•";
+const doneCount = rows.filter((r) => r.done).length;
+const week = [3, 3, 2, 3, 3, 1, 3];
+---
+
+<figure class="phone" role="img" aria-label={t.a11y.phoneMock}>
+  <div class="glow" aria-hidden="true"></div>
+  <div class="device" aria-hidden="true">
+    <div class="screen">
+      <div class="status">
+        <span>9:41</span>
+        <span class="island"></span>
+        <span class="status-icons">▮▮▮ ◔</span>
+      </div>
+
+      <div class="top">
+        <div>
+          <p class="brand">COLD FORGE</p>
+          <p class="today">{t.phone.today}</p>
+        </div>
+        <span class="day-chip">{m.stats.day(DAY, ARC_DAYS)}</span>
+      </div>
+
+      <div class="heat-card">
+        <div class="ring" style={`--p:${HEAT}`}>
+          <div class="ring-inner">
+            <strong>{Math.round(HEAT * 100)}%</strong>
+            <span>{t.phone.heat}</span>
+          </div>
+        </div>
+        <div class="heat-stats">
+          <div class="stat">
+            <span class="stat-label">{m.stats.perfectStreak}</span>
+            <span class="stat-value">🔥 {m.days(12)}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">{m.stats.rank}</span>
+            <span class="stat-value">{rank.emoji} {m.ranks[rank.id]}</span>
+          </div>
+          <div class="week">
+            {week.map((v) => <span data-heat={v} />)}
+          </div>
+        </div>
+      </div>
+
+      <div class="list-head">
+        <span>{fmt(t.phone.done, { done: doneCount, total: rows.length })}</span>
+        <span class="bar"><span style={`width:${(doneCount / rows.length) * 100}%`}></span></span>
+      </div>
+
+      <ul class="habits">
+        {
+          rows.map((r) => (
+            <li class:list={[{ done: r.done }]}>
+              <span class="h-emoji">{emoji(r.id)}</span>
+              <span class="h-body">
+                <span class="h-name">{m.habits[r.id]}</span>
+                <span class="h-streak">{r.done ? `🔥 ${r.streak}` : t.phone.tap}</span>
+              </span>
+              <span class="check">{r.done ? "✓" : ""}</span>
+            </li>
+          ))
+        }
+      </ul>
+
+      <div class="tabbar">
+        <span class="tab on">🔥</span>
+        <span class="tab">▦</span>
+        <span class="tab">⚔️</span>
+        <span class="tab">↗</span>
+      </div>
+    </div>
+  </div>
+  <span class="spark s1" aria-hidden="true"></span>
+  <span class="spark s2" aria-hidden="true"></span>
+  <span class="spark s3" aria-hidden="true"></span>
+</figure>
+
+<style>
+  .phone {
+    position: relative;
+    width: min(100%, 330px);
+    margin-inline: auto;
+  }
+  .glow {
+    position: absolute;
+    inset: 8% -18% -6%;
+    background:
+      radial-gradient(closest-side at 60% 70%, rgb(249 115 22 / 0.45), transparent 70%),
+      radial-gradient(closest-side at 35% 25%, rgb(56 189 248 / 0.35), transparent 70%);
+    filter: blur(30px);
+    z-index: 0;
+  }
+  .device {
+    position: relative;
+    z-index: 1;
+    aspect-ratio: 9 / 19;
+    padding: 10px;
+    border-radius: 48px;
+    background: linear-gradient(145deg, #2a3b55, #0b121d 40%, #1d2a3d);
+    box-shadow:
+      0 0 0 1px #33465f,
+      0 40px 80px -20px rgb(0 0 0 / 0.8),
+      inset 0 0 0 2px rgb(255 255 255 / 0.04);
+  }
+  .screen {
+    height: 100%;
+    border-radius: 39px;
+    overflow: hidden;
+    padding: 12px 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: radial-gradient(circle at 50% 0%, #10203a 0%, #070b12 62%);
+    font-size: 12px;
+    line-height: 1.3;
+  }
+  .status {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 0 8px;
+  }
+  .island { width: 76px; height: 22px; border-radius: 99px; background: #000; }
+  .status-icons { font-size: 8px; letter-spacing: 1px; color: var(--muted); }
+
+  .top { display: flex; justify-content: space-between; align-items: flex-end; padding: 0 2px; }
+  .brand { font-size: 9px; letter-spacing: 0.35em; font-weight: 800; color: var(--ice); }
+  .today { font-size: 24px; font-weight: 900; letter-spacing: -0.03em; }
+  .day-chip {
+    font-weight: 800;
+    font-size: 11px;
+    padding: 5px 9px;
+    border-radius: 99px;
+    color: var(--ice);
+    background: rgb(56 189 248 / 0.12);
+    border: 1px solid rgb(56 189 248 / 0.3);
+  }
+
+  .heat-card {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border-radius: 20px;
+    background: #0f1724;
+    border: 1px solid #1d2a3d;
+  }
+  .ring {
+    --p: 0.7;
+    flex-shrink: 0;
+    width: 92px;
+    height: 92px;
+    border-radius: 50%;
+    padding: 8px;
+    background: conic-gradient(from 200deg, var(--ice-strong), var(--ember-soft) calc(var(--p) * 60%), var(--ember) calc(var(--p) * 100%), #1d2a3d 0);
+    box-shadow: 0 0 24px -4px var(--ember-glow);
+  }
+  .ring-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: #0b121d;
+    display: grid;
+    place-content: center;
+    text-align: center;
+  }
+  .ring-inner strong { font-size: 20px; font-weight: 900; line-height: 1; }
+  .ring-inner span { font-size: 7.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 3px; max-width: 56px; }
+
+  .heat-stats { display: grid; gap: 7px; min-width: 0; }
+  .stat { display: grid; }
+  .stat-label { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
+  .stat-value { font-weight: 800; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .week { display: flex; gap: 3px; }
+  .week span {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+
+  .list-head { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 11px; color: var(--muted); padding: 0 2px; }
+  .bar { flex: 1; height: 6px; border-radius: 99px; background: #1d2a3d; overflow: hidden; }
+  .bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--ice-strong), var(--ember)); }
+
+  .habits { list-style: none; display: grid; gap: 7px; }
+  .habits li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 14px;
+    background: #0b121d;
+    border: 1px solid #16212f;
+  }
+  .habits li.done { border-color: rgb(56 189 248 / 0.22); background: linear-gradient(90deg, rgb(56 189 248 / 0.08), #0b121d 70%); }
+  .h-emoji {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    background: #10203a;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .h-body { flex: 1; display: grid; min-width: 0; }
+  .h-name { font-weight: 800; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .h-streak { font-size: 10px; color: var(--ember-soft); font-weight: 700; }
+  li:not(.done) .h-streak { color: var(--muted); }
+  .check {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-weight: 900;
+    font-size: 13px;
+    border: 2px solid var(--ice);
+    color: var(--bg);
+  }
+  li.done .check { background: var(--ice); box-shadow: 0 0 14px rgb(125 211 252 / 0.55); }
+  li:not(.done) .check { border-color: var(--ember); box-shadow: 0 0 0 4px rgb(249 115 22 / 0.15); }
+
+  .tabbar {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    padding: 8px 6px;
+    border-radius: 18px;
+    background: rgb(15 23 36 / 0.9);
+    border: 1px solid #1d2a3d;
+  }
+  .tab {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 11px;
+    font-size: 15px;
+    color: var(--muted);
+    filter: grayscale(0.7);
+    opacity: 0.7;
+  }
+  .tab.on { background: rgb(249 115 22 / 0.16); filter: none; opacity: 1; box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.4); }
+
+  .spark {
+    position: absolute;
+    z-index: 2;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fdba74;
+    box-shadow: 0 0 12px 3px rgb(249 115 22 / 0.8);
+  }
+  .s1 { right: 6%; bottom: 22%; }
+  .s2 { right: -2%; bottom: 30%; width: 4px; height: 4px; }
+  .s3 { right: 10%; bottom: 34%; width: 3px; height: 3px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .tabbar {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    padding: 8px 6px;
+    border-radius: 18px;
+    background: rgb(15 23 36 / 0.9);
+    border: 1px solid #1d2a3d;
+  }
+  .tab {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 11px;
+    font-size: 15px;
+    color: var(--muted);
+    filter: grayscale(0.7);
+    opacity: 0.7;
+  }
+  .tab.on { background: rgb(249 115 22 / 0.16); filter: none; opacity: 1; box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.4); }
+
+  .spark { animation: rise 2.6s ease-out infinite; }
+    .s2 { animation-delay: 0.8s; }
+    .s3 { animation-delay: 1.6s; }
+    .device { animation: float 7s ease-in-out infinite; }
+  }
+  @keyframes rise {
+    0% { transform: translate(0, 0) scale(1); opacity: 0; }
+    15% { opacity: 1; }
+    100% { transform: translate(14px, -90px) scale(0.3); opacity: 0; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+    50% { transform: translateY(-10px) rotate(-0.5deg); }
+  }
+</style>

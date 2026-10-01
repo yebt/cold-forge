@@ -1,0 +1,30 @@
+---
+import type { GetStaticPaths } from "astro";
+import Base from "../../layouts/Base.astro";
+import Hero from "../../components/Hero.astro";
+import HowItWorks from "../../components/HowItWorks.astro";
+import Features from "../../components/Features.astro";
+import Ranks from "../../components/Ranks.astro";
+import ShareShowcase from "../../components/ShareShowcase.astro";
+import Habits from "../../components/Habits.astro";
+import Milestones from "../../components/Milestones.astro";
+import Faq from "../../components/Faq.astro";
+import Waitlist from "../../components/Waitlist.astro";
+import { LOCALES, type Locale } from "../../i18n/index.ts";
+
+export const getStaticPaths = (() => LOCALES.map((locale) => ({ params: { locale } }))) satisfies GetStaticPaths;
+
+const locale = Astro.params.locale as Locale;
+---
+
+<Base locale={locale}>
+  <Hero locale={locale} />
+  <HowItWorks locale={locale} />
+  <Features locale={locale} />
+  <Ranks locale={locale} />
+  <ShareShowcase locale={locale} />
+  <Habits locale={locale} />
+  <Milestones locale={locale} />
+  <Faq locale={locale} />
+  <Waitlist locale={locale} />
+</Base>

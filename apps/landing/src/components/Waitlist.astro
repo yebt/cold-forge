@@ -1,0 +1,153 @@
+---
+import { useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { locale } = Astro.props;
+const { t } = useCopy(locale);
+---
+
+<section id="waitlist" class="section" aria-labelledby="waitlist-title">
+  <div class="container">
+    <div class="panel" data-reveal>
+      <div class="heat" aria-hidden="true"></div>
+      <div class="inner">
+        <p class="kicker">{t.waitlist.kicker}</p>
+        <h2 id="waitlist-title" class="h2">{t.waitlist.title}</h2>
+        <p class="lead">{t.waitlist.sub}</p>
+
+        <!--
+          TODO(waitlist): there is no backend yet. Point `data-endpoint` at the real API
+          (e.g. POST /api/waitlist { email, locale }) and remove the client-only fallback below.
+        -->
+        <form class="form" data-waitlist data-endpoint="" data-invalid={t.waitlist.invalid} novalidate>
+          <input type="hidden" name="locale" value={locale} />
+          <label class="sr-only" for="waitlist-email">{t.waitlist.label}</label>
+          <input
+            id="waitlist-email"
+            name="email"
+            type="email"
+            inputmode="email"
+            autocomplete="email"
+            required
+            placeholder={t.waitlist.placeholder}
+            aria-describedby="waitlist-note waitlist-error"
+          />
+          <button class="btn btn-fire" type="submit">{t.waitlist.button}</button>
+          <p id="waitlist-error" class="error" data-error hidden></p>
+        </form>
+        <p class="thanks" data-thanks role="status" tabindex="-1" hidden>{t.waitlist.thanks}</p>
+        <p id="waitlist-note" class="note">{t.waitlist.note}</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+  document.querySelectorAll<HTMLFormElement>("[data-waitlist]").forEach((form) => {
+    const input = form.querySelector<HTMLInputElement>('input[type="email"]');
+    const error = form.querySelector<HTMLElement>("[data-error]");
+    const thanks = form.parentElement?.querySelector<HTMLElement>("[data-thanks]");
+    if (!input || !error || !thanks) return;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const email = input.value.trim();
+      if (!EMAIL.test(email)) {
+        error.textContent = form.dataset.invalid ?? "";
+        error.hidden = false;
+        input.setAttribute("aria-invalid", "true");
+        input.focus();
+        return;
+      }
+      error.hidden = true;
+      input.removeAttribute("aria-invalid");
+
+      const endpoint = form.dataset.endpoint;
+      if (endpoint) {
+        // TODO(waitlist): handle failures / retries once the API exists.
+        await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(Object.fromEntries(new FormData(form))),
+        }).catch(() => undefined);
+      }
+
+      form.hidden = true;
+      thanks.hidden = false;
+      thanks.focus();
+    });
+  });
+</script>
+
+<style>
+  .panel {
+    position: relative;
+    overflow: hidden;
+    border-radius: 28px;
+    border: 1px solid var(--border-strong);
+    background:
+      radial-gradient(600px 300px at 50% 120%, rgb(249 115 22 / 0.35), transparent 70%),
+      radial-gradient(500px 260px at 0% 0%, rgb(56 189 248 / 0.16), transparent 70%),
+      linear-gradient(180deg, #0f1724, #070b12);
+    box-shadow: 0 50px 100px -50px var(--ember-glow);
+  }
+  .heat {
+    position: absolute;
+    inset: auto 32px 0;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--grad-fire);
+  }
+  .inner {
+    position: relative;
+    padding: clamp(32px, 7vw, 72px) clamp(20px, 6vw, 72px);
+    text-align: center;
+    display: grid;
+    justify-items: center;
+  }
+  .lead { margin-inline: auto; }
+  .form {
+    width: 100%;
+    max-width: 520px;
+    margin-top: 32px;
+    display: grid;
+    gap: 10px;
+  }
+  input[type="email"] {
+    width: 100%;
+    min-height: 56px;
+    padding: 0 18px;
+    border-radius: 14px;
+    border: 1px solid var(--border-strong);
+    background: #05080d;
+    color: var(--text);
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+  input[type="email"]::placeholder { color: #7d8ca3; }
+  input[type="email"]:focus-visible { outline: 3px solid var(--ice); outline-offset: 2px; border-color: transparent; }
+  input[aria-invalid="true"] { border-color: #f87171; }
+  .form .btn { min-height: 56px; }
+  .error { grid-column: 1 / -1; color: #fca5a5; font-weight: 700; font-size: 0.95rem; text-align: left; }
+  .thanks {
+    margin-top: 32px;
+    max-width: 520px;
+    padding: 18px 22px;
+    border-radius: 16px;
+    background: rgb(56 189 248 / 0.1);
+    border: 1px solid rgb(125 211 252 / 0.4);
+    color: var(--ice-pale);
+    font-weight: 800;
+    font-size: 1.1rem;
+  }
+  .thanks:focus { outline: none; }
+  .note { margin-top: 16px; color: var(--muted); font-size: 0.9rem; }
+
+  @media (min-width: 600px) {
+    .form { grid-template-columns: 1fr auto; }
+  }
+</style>

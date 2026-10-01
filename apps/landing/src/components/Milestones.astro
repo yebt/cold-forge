@@ -1,0 +1,144 @@
+---
+import { ARC_DAYS, MILESTONE_DAYS } from "@cold-forge/core";
+import { fmt, useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t, m } = useCopy(Astro.props.locale);
+const icons: Record<number, string> = { 7: "🔨", 30: "🔥", 50: "⚙️", 75: "🛡️", 92: "🧊" };
+---
+
+<section id="milestones" class="section" aria-labelledby="milestones-title">
+  <div class="container">
+    <header class="section-head" data-reveal>
+      <p class="kicker">{t.milestones.kicker}</p>
+      <h2 id="milestones-title" class="h2">{t.milestones.title}</h2>
+      <p class="lead">{t.milestones.sub}</p>
+    </header>
+
+    <div class="track" aria-hidden="true" data-reveal>
+      <span class="fill"></span>
+      {MILESTONE_DAYS.map((d) => <span class="tick" style={`--x:${(d / ARC_DAYS) * 100}%`} />)}
+    </div>
+
+    <ol class="list">
+      {
+        MILESTONE_DAYS.map((d, i) => (
+          <li class:list={["ms", { final: d === ARC_DAYS }]} data-reveal style={`--reveal-delay:${i * 80}ms`}>
+            <span class="icon" aria-hidden="true">{icons[d] ?? "⭐"}</span>
+            <span class="day">{fmt(t.milestones.day, { n: d })}</span>
+            <span class="title">{m.milestones[d]}</span>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<style>
+  .track { display: none; }
+  .list {
+    list-style: none;
+    display: grid;
+    gap: 0;
+    position: relative;
+    padding-left: 30px;
+  }
+  .list::before {
+    content: "";
+    position: absolute;
+    left: 9px;
+    top: 10px;
+    bottom: 10px;
+    width: 2px;
+    background: linear-gradient(180deg, var(--ice-strong), var(--ember));
+    border-radius: 2px;
+  }
+  .ms {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 14px;
+    align-items: center;
+    padding: 14px 0;
+  }
+  .ms::before {
+    content: "";
+    position: absolute;
+    left: -27px;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 3px solid var(--ice);
+  }
+  .ms.final::before { border-color: var(--ember); box-shadow: 0 0 14px var(--ember); }
+  .icon {
+    grid-row: span 2;
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    font-size: 1.4rem;
+    border-radius: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+  }
+  .day {
+    font-size: 0.78rem;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ice);
+  }
+  .title { font-weight: 900; font-size: 1.15rem; line-height: 1.2; letter-spacing: -0.01em; }
+  .final .day { color: var(--ember-soft); }
+
+  @media (min-width: 900px) {
+    .track {
+      display: block;
+      position: relative;
+      height: 10px;
+      border-radius: 99px;
+      background: var(--border);
+      margin-bottom: 28px;
+    }
+    .fill {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--ice-strong), var(--ember));
+      opacity: 0.85;
+    }
+    .tick {
+      position: absolute;
+      top: 50%;
+      left: var(--x);
+      width: 20px;
+      height: 20px;
+      margin: -10px 0 0 -10px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 3px solid var(--ice-pale);
+    }
+    .tick:last-child { margin-left: -20px; border-color: var(--ember); box-shadow: 0 0 16px var(--ember); }
+
+    .list { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; padding-left: 0; }
+    .list::before { display: none; }
+    .ms {
+      grid-template-columns: 1fr;
+      row-gap: 8px;
+      align-content: start;
+      padding: 20px;
+      border-radius: var(--radius);
+      background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    .ms::before { display: none; }
+    .icon { grid-row: auto; margin-bottom: 6px; }
+    .ms.final { border-color: rgb(249 115 22 / 0.5); box-shadow: 0 20px 50px -24px var(--ember-glow); }
+  }
+</style>

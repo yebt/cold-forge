@@ -1,0 +1,17 @@
+---
+interface Props {
+  size?: number;
+}
+const { size = 32 } = Astro.props;
+---
+
+<svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" focusable="false" class="logo">
+  <rect width="64" height="64" rx="14" fill="#0f1724" stroke="#1d2a3d" stroke-width="2"></rect>
+  <path d="M10 20h34c0 6 4 9 10 9v3c-7 0-11 3-12 7h-6l3 6h6v5H19v-5h6l3-6h-6c-1-6-6-10-12-12z" fill="#7dd3fc"></path>
+  <path d="M10 20h34c0 2 .5 3.6 1.4 5H14z" fill="#e0f2fe" opacity=".7"></path>
+  <path d="M50 8l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#f97316"></path>
+</svg>
+
+<style>
+  .logo { flex-shrink: 0; filter: drop-shadow(0 4px 14px rgb(56 189 248 / 0.25)); }
+</style>

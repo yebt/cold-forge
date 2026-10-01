@@ -1,0 +1,96 @@
+---
+import { useCopy, type Locale } from "../i18n/index.ts";
+
+interface Props {
+  locale: Locale;
+}
+const { t } = useCopy(Astro.props.locale);
+const icons = ["🧊", "👆", "📲"];
+---
+
+<section id="how" class="section" aria-labelledby="how-title">
+  <div class="container">
+    <header class="section-head" data-reveal>
+      <p class="kicker">{t.how.kicker}</p>
+      <h2 id="how-title" class="h2">{t.how.title}</h2>
+    </header>
+
+    <ol class="steps">
+      {
+        t.how.steps.map((step, i) => (
+          <li class="step card" data-reveal style={`--reveal-delay:${i * 90}ms`}>
+            <div class="step-top">
+              <span class="num">{String(i + 1).padStart(2, "0")}</span>
+              <span class="icon" aria-hidden="true">{icons[i]}</span>
+            </div>
+            <h3>{step.title}</h3>
+            <p>{step.body}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<style>
+  .steps {
+    list-style: none;
+    display: grid;
+    gap: 16px;
+    counter-reset: step;
+  }
+  .step {
+    position: relative;
+    padding: 26px 24px 28px;
+    display: grid;
+    gap: 12px;
+    align-content: start;
+    overflow: hidden;
+  }
+  .step::after {
+    content: "";
+    position: absolute;
+    inset: auto -40% -60% auto;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgb(249 115 22 / 0.12), transparent);
+    pointer-events: none;
+  }
+  .step-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .num {
+    font-size: 3rem;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.05em;
+    background: linear-gradient(180deg, var(--ice), rgb(125 211 252 / 0.15));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .icon {
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    font-size: 1.6rem;
+    border-radius: 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+  }
+  h3 { font-size: 1.35rem; font-weight: 900; letter-spacing: -0.02em; line-height: 1.15; }
+  p { color: var(--muted); }
+
+  @media (min-width: 860px) {
+    .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+    .step:not(:last-child)::before {
+      content: "→";
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      font-weight: 900;
+      color: var(--border-strong);
+      font-size: 1.4rem;
+    }
+  }
+</style>
