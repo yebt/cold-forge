@@ -56,7 +56,7 @@ jobs:
           java-version: "21"
 
       - name: Install
-        run: bun install --frozen-lockfile && (cd firebase && bun install --frozen-lockfile)
+        run: bun install --frozen-lockfile
 
       - name: Rules + emulator tests
         run: >-

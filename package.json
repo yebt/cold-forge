@@ -4,7 +4,8 @@
   "description": "COLD FORGE — trackea y presume tu progreso en el Winter Arc.",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "firebase"
   ],
   "scripts": {
     "dev": "bun run --filter '@cold-forge/app' --filter '@cold-forge/landing' dev",
